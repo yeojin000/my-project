@@ -1,4 +1,4 @@
-// Favorites.jsx
+// src/pages/Favorites.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
@@ -31,7 +31,7 @@ function isFav(id) {
   return loadFavs().some((x) => x.id === id);
 }
 
-// 임시 데이터(시연용)
+// 임시 데이터(최초 완전 비었을 때 데모용)
 const SEED = [
   { id: "ev001", title: "서울재즈페스티벌 2025", category: "공연", date: "2025-06-02 ~ 06-05", place: "올림픽공원" },
   { id: "ev002", title: "시립미술관 여름 기획전", category: "전시", date: "2025-06-10 ~ 08-31", place: "서울시립미술관" },
@@ -49,7 +49,7 @@ export default function Favorites() {
   // 로컬스토리지 즐겨찾기 목록
   const [favs, setFavs] = useState(() => loadFavs());
 
-  // 데모 편의: 즐겨찾기 비어 있으면 SEED 2개 넣어줌(최초 1회)
+  // 최초 완전 비었으면 SEED 주입(데모용)
   useEffect(() => {
     if (favs.length === 0) {
       const seeded = [SEED[0], SEED[1]];
@@ -59,13 +59,24 @@ export default function Favorites() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 카테고리별 목록 + 검색
+  // 카테고리별 묶음
+  const favsByCategory = useMemo(() => {
+    const map = Object.fromEntries(CATEGORIES.map((c) => [c, []]));
+    for (const f of favs) {
+      if (map[f.category]) map[f.category].push(f);
+    }
+    return map;
+  }, [favs]);
+
+  // (목록 화면) 카테고리별 + 검색
   const list = useMemo(() => {
     const base = category ? favs.filter((x) => x.category === category) : favs;
     if (!q.trim()) return base;
     const k = q.trim().toLowerCase();
     return base.filter(
-      (x) => x.title.toLowerCase().includes(k) || x.place.toLowerCase().includes(k)
+      (x) =>
+        x.title.toLowerCase().includes(k) ||
+        (x.place || "").toLowerCase().includes(k)
     );
   }, [favs, category, q]);
 
@@ -87,27 +98,54 @@ export default function Favorites() {
 
   return (
     <div className="min-h-screen bg-white px-6 py-8 max-w-6xl mx-auto">
-      {/* 화면 1: 카테고리 그리드 */}
+      {/* 화면 1: 카테고리 그리드 (이미지 대신 텍스트 3~4개 미리보기) */}
       {!category && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-          {CATEGORIES.map((cat) => (
-            <div key={cat}>
-              <div className="mb-2 text-gray-800">{cat}</div>
-              <button
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {CATEGORIES.map((cat) => {
+            const items = favsByCategory[cat] || [];
+            const preview = items.slice(0, 4);
+            const count = items.length;
+
+            return (
+              <div
+                key={cat}
+                role="button"
+                tabIndex={0}
                 onClick={() => goList(cat)}
-                className="w-full aspect-[16/9] bg-gray-200 border rounded-lg hover:bg-gray-300 transition grid place-items-center"
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") goList(cat); }}
+                className="border rounded-lg p-4 bg-gray-50 hover:bg-gray-100 transition cursor-pointer"
                 title={`${cat} 즐겨찾기 보기`}
                 aria-label={`${cat} 즐겨찾기 목록으로 이동`}
               >
-                {/* 회색 박스 내부 표기 (설명 문구는 화면 하단에서 제거) */}
-                <div className="text-gray-600 text-sm text-center leading-snug px-2">
-                  {cat} 대표 이미지 자리
-                  <br />
-                  (클릭하여 목록 보기)
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-semibold text-gray-900">{cat}</h3>
+                  <span className="text-xs text-gray-600">{count}개</span>
                 </div>
-              </button>
-            </div>
-          ))}
+
+                {preview.length === 0 ? (
+                  <div className="text-sm text-gray-500 h-20 grid place-items-center">
+                    이 카테고리에 즐겨찾기가 비어 있어요.
+                  </div>
+                ) : (
+                  <ul className="space-y-2">
+                    {preview.map((it) => (
+                      <li key={it.id} className="text-sm">
+                        <div className="font-medium truncate">{it.title}</div>
+                        <div className="text-xs text-gray-600 truncate">
+                          📅 {it.date} · 📍 {it.place}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {/* 더보기 영역 */}
+                <div className="mt-3 text-xs text-blue-700 underline underline-offset-4">
+                  {count > 4 ? `+ ${count - 4}개 더 보기` : "전체 보기"}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -150,7 +188,7 @@ export default function Favorites() {
                 return (
                   <li
                     key={it.id}
-                    className="flex items-center justify-between bg-gray-200 rounded px-4 py-3"
+                    className="flex items-center justify-between bg-gray-100 rounded px-4 py-3"
                   >
                     <div className="min-w-0">
                       <div className="font-medium truncate">{it.title}</div>
