@@ -1,5 +1,9 @@
-// src/App.jsx (이전 main_page.jsx + Home.jsx 통합 + 서울시 문화행사 API 연동)
-// - 데이터를 lib/seoulApi.js의 fetchSeoulAllEventsJSON로 페이징 수집
+// src/App.js
+// - HOME에서 전체 데이터 로딩 대신,
+//   ① 추천 행사는 별도 API(START_INDEX=0, END_INDEX=4)
+//   ② 행사 캘린더는 현재 달력에 보이는 날짜(최대 42일)에 대해서만 일별 API 호출
+// - seoulApi.js 에 fetchSeoulRecommendedEvents, fetchSeoulDailyEvents 사용
+
 import React, { useEffect, useMemo, useState } from "react";
 import BrowseEvents from "./pages/BrowseEvents.jsx";
 import MapPage from "./pages/Map.jsx";
@@ -7,11 +11,25 @@ import CalendarPage from "./pages/Calendar.jsx";
 import Favorites from "./pages/Favorites.jsx";
 import MyPage from "./pages/MyPage.jsx";
 import EventDetail from "./pages/EventDetail";
-import { BrowserRouter, Routes, Route, NavLink, useNavigate } from "react-router-dom";
-import { FaTheaterMasks, FaPalette, FaGraduationCap, FaQuestion } from "react-icons/fa";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  NavLink,
+  useNavigate,
+} from "react-router-dom";
+import {
+  FaTheaterMasks,
+  FaPalette,
+  FaGraduationCap,
+  FaQuestion,
+} from "react-icons/fa";
 
-// 🔗 전체 수집 유틸 (src/lib/seoulApi.js)
-import { fetchSeoulAllEventsJSON } from "./lib/seoulApi";
+// 🔗 유틸
+import {
+  fetchSeoulRecommendedEvents, // 추천 행사용 (START_INDEX=0, END_INDEX=4)
+  fetchSeoulDailyEvents, // 특정 날짜 행사용 (DATE + START_INDEX=0, END_INDEX=4)
+} from "./lib/seoulApi";
 
 /* === .env 키 === */
 const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
@@ -71,38 +89,57 @@ function toISODate(dateStr = "") {
 
 /** 카테고리 상위매핑 */
 function toHighLevelCategory(codename = "", themecode = "") {
-  const c = String(codename);
-  if (["콘서트", "클래식", "국악", "무용", "연극", "뮤지컬/오페라", "축제-기타"].some(k => c.includes(k))) {
+  const c = String(codename || "");
+  const t = String(themecode || "");
+
+  // 1) 공연 관련 키워드
+  if (
+    [
+      "공연",
+      "콘서트",
+      "클래식",
+      "국악",
+      "무용",
+      "연극",
+      "뮤지컬",
+      "오페라",
+      "음악회",
+      "페스티벌",
+      "축제",
+    ].some((k) => c.includes(k))
+  ) {
     return "공연";
   }
-  if (c.includes("전시/미술")) return "전시";
-  if (c.includes("교육/체험") || String(themecode).includes("교육")) return "교육/체험";
+
+  // 2) 전시
+  if (["전시", "미술", "갤러리", "아트", "사진전"].some((k) => c.includes(k))) {
+    return "전시";
+  }
+
+  // 3) 교육/체험
+  if (
+    ["교육", "체험", "워크숍", "워크샵", "강좌", "강의", "세미나", "강연"].some(
+      (k) => c.includes(k)
+    ) ||
+    t.includes("교육")
+  ) {
+    return "교육/체험";
+  }
+
+  // 4) 나머지는 기타
   return "기타";
 }
 
-/** OpenAPI 결과(배열/JSON 둘 다 허용)를 프론트에서 쓰기 편한 객체배열로 변환 (캘린더용 allDates 포함) */
+/** OpenAPI row 배열을 프론트에서 쓰기 편한 객체배열로 변환 */
 function normalizeEvents(jsonOrRows) {
   const rows = Array.isArray(jsonOrRows)
     ? jsonOrRows
-    : (jsonOrRows?.culturalEventInfo?.row || []);
+    : jsonOrRows?.culturalEventInfo?.row || [];
+
   return rows.map((r, idx) => {
     const start = toISODate(r.STRTDATE || r.DATE);
     const end = toISODate(r.END_DATE || r.ENDDATE || r.END);
     const cat = toHighLevelCategory(r.CODENAME, r.THEMECODE);
-
-    // 달력 표시를 위해 시작~종료까지 날짜 확장 (최대 31일로 안전 제한)
-    const dates = [];
-    if (start) {
-      const until = end && !isNaN(end) ? end : start;
-      const maxSpan = 31;
-      const cursor = new Date(start);
-      let steps = 0;
-      while (cursor <= until && steps < maxSpan) {
-        dates.push(formatDateKey(cursor));
-        cursor.setDate(cursor.getDate() + 1);
-        steps++;
-      }
-    }
 
     return {
       id: r.SVCID || `${Date.now()}_${idx}`,
@@ -119,13 +156,12 @@ function normalizeEvents(jsonOrRows) {
       img: r.MAIN_IMG,
       startDate: start ? formatDateKey(start) : null,
       endDate: end && !isNaN(end) ? formatDateKey(end) : null,
-      allDates: dates, // 캘린더 찍을 날짜 배열
     };
   });
 }
 
-/** 데이터 로딩 훅: 전체 페이지를 합쳐 로드 (lib 사용) */
-function useSeoulEvents() {
+/* --- 1) 추천 행사만 별도 API로 로딩하는 훅 --- */
+function useRecommendedEvents(limit = 4) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
@@ -135,21 +171,25 @@ function useSeoulEvents() {
     let mounted = true;
 
     (async () => {
-      setLoading(true);
-      setErr(null);
       try {
         if (!SEOUL_KEY) {
-          throw new Error("REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인).");
+          throw new Error(
+            "REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인)."
+          );
         }
-        // 👉 한 번에 전량 수집 (200개 페이지 단위), 안전상한은 필요 시 조정
-        const rows = await fetchSeoulAllEventsJSON({
+        setLoading(true);
+        setErr(null);
+
+        const json = await fetchSeoulRecommendedEvents({
           seoulKey: SEOUL_KEY,
-          pageSize: 200,
-          hardLimit: 5000,   // 필요하면 상향 가능
-          useProxy: false,   // setupProxy 사용 시 true
+          startIndex: 0,
+          endIndex: limit,
           signal: ctrl.signal,
         });
+
         if (!mounted) return;
+
+        const rows = json?.culturalEventInfo?.row || [];
         const items = normalizeEvents(rows);
         setEvents(items);
       } catch (e) {
@@ -165,38 +205,105 @@ function useSeoulEvents() {
       mounted = false;
       ctrl.abort();
     };
-  }, []);
+  }, [limit]);
 
   return { events, loading, error: err };
 }
 
-/* --- Calendar 컴포넌트 (Calendar.jsx 스타일로 동기화) --- */
-function Calendar({ events = [], weekStartsOn = 0, title = "캘린더", onCardClick }) {
-  const [cursor, setCursor] = useState(() => new Date()); // 현재 달
-  const y = cursor.getFullYear();
-  const m = cursor.getMonth();
-  const todayKey = formatDateKey(new Date());
+/* --- 2) 현재 달력에 보이는 날짜(최대 42일)에 대해서만 일별 API 42개 호출하는 훅 --- */
+function useCalendarMonth(year, month, weekStartsOn = 0, perDayLimit = 4) {
+  const [dataByDay, setDataByDay] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
 
-  const matrix = useMemo(() => getMonthMatrix(y, m, weekStartsOn), [y, m, weekStartsOn]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    let mounted = true;
 
-  // 날짜별 매핑: 현재 달에 해당하는 날짜만 셀에 점으로 표시
-  const eventsByDay = useMemo(() => {
-    const map = {};
-    const ymPrefix = `${y}-${String(m + 1).padStart(2, "0")}-`;
-    for (const ev of events) {
-      const days = ev.allDates?.length ? ev.allDates : (ev.startDate ? [ev.startDate] : []);
-      for (const d of days) {
-        if (d.startsWith(ymPrefix)) {
-          (map[d] ||= []).push(ev);
+    (async () => {
+      try {
+        if (!SEOUL_KEY) {
+          throw new Error(
+            "REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인)."
+          );
         }
-      }
-    }
-    return map;
-  }, [events, y, m]);
+        setLoading(true);
+        setErr(null);
+        setDataByDay({});
 
-  const weekLabels = weekStartsOn === 1
-    ? ["월", "화", "수", "목", "금", "토", "일"]
-    : ["일", "월", "화", "수", "목", "금", "토"];
+        const matrix = getMonthMatrix(year, month, weekStartsOn);
+        const dates = matrix.map((cell) => formatDateKey(cell.date)); // 최대 42개
+
+        const results = await Promise.all(
+          dates.map(async (dateKey) => {
+            try {
+              const json = await fetchSeoulDailyEvents({
+                seoulKey: SEOUL_KEY,
+                date: dateKey,
+                startIndex: 0,
+                endIndex: perDayLimit,
+                signal: ctrl.signal,
+              });
+
+              const info = json?.culturalEventInfo;
+              const rows = info?.row || [];
+              const totalCount = info?.list_total_count ?? rows.length;
+              const events = normalizeEvents(rows);
+
+              return { dateKey, events, totalCount };
+            } catch (e) {
+              console.error("Calendar daily fetch error:", dateKey, e);
+              return { dateKey, events: [], totalCount: 0 };
+            }
+          })
+        );
+
+        if (!mounted) return;
+
+        const map = {};
+        results.forEach(({ dateKey, events, totalCount }) => {
+          map[dateKey] = { events, totalCount };
+        });
+        setDataByDay(map);
+      } catch (e) {
+        if (!mounted) return;
+        setErr(e);
+      } finally {
+        if (!mounted) return;
+        setLoading(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      ctrl.abort();
+    };
+  }, [year, month, weekStartsOn, perDayLimit]);
+
+  return { dataByDay, loading, error: err };
+}
+
+/* --- Calendar 컴포넌트 --- */
+function Calendar({
+  year,
+  month,
+  dataByDay = {},
+  weekStartsOn = 0,
+  title = "캘린더",
+  onCardClick,
+  onPrevMonth,
+  onNextMonth,
+}) {
+  const todayKey = formatDateKey(new Date());
+  const matrix = useMemo(
+    () => getMonthMatrix(year, month, weekStartsOn),
+    [year, month, weekStartsOn]
+  );
+
+  const weekLabels =
+    weekStartsOn === 1
+      ? ["월", "화", "수", "목", "금", "토", "일"]
+      : ["일", "월", "화", "수", "목", "금", "토"];
 
   return (
     <div
@@ -208,17 +315,23 @@ function Calendar({ events = [], weekStartsOn = 0, title = "캘린더", onCardCl
         <h3 className="font-semibold text-lg">{title}</h3>
         <div className="flex items-center gap-2">
           <button
-            onClick={(e) => { e.stopPropagation(); setCursor(new Date(y, m - 1, 1)); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onPrevMonth?.();
+            }}
             className="px-2 py-1 rounded border text-sm hover:bg-gray-50"
             aria-label="이전 달"
           >
             ←
           </button>
           <div className="text-sm font-medium">
-            {y}.{String(m + 1).padStart(2, "0")}
+            {year}.{String(month + 1).padStart(2, "0")}
           </div>
           <button
-            onClick={(e) => { e.stopPropagation(); setCursor(new Date(y, m + 1, 1)); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onNextMonth?.();
+            }}
             className="px-2 py-1 rounded border text-sm hover:bg-gray-50"
             aria-label="다음 달"
           >
@@ -228,16 +341,27 @@ function Calendar({ events = [], weekStartsOn = 0, title = "캘린더", onCardCl
       </div>
 
       <div className="grid grid-cols-7 text-center text-xs text-gray-600 mb-1">
-        {weekLabels.map((w) => (<div key={w} className="py-1">{w}</div>))}
+        {weekLabels.map((w) => (
+          <div key={w} className="py-1">
+            {w}
+          </div>
+        ))}
       </div>
 
       <div className="grid grid-cols-7 gap-1">
         {matrix.map(({ date, inCurrentMonth }, idx) => {
           const key = formatDateKey(date);
           const day = date.getDate();
-          const todaysEvents = inCurrentMonth ? (eventsByDay[key] || []) : [];
+          const dayData = inCurrentMonth
+            ? dataByDay[key] || { events: [], totalCount: 0 }
+            : null;
+          const todaysEvents = dayData?.events || [];
+          const totalCount = dayData?.totalCount ?? todaysEvents.length;
 
-          // 지난 날짜 회색/비활성 스타일
+          const maxDots = 4;
+          const dotEvents = todaysEvents.slice(0, maxDots);
+          const extra = totalCount - dotEvents.length;
+
           const isPast = inCurrentMonth && key < todayKey;
 
           return (
@@ -249,25 +373,27 @@ function Calendar({ events = [], weekStartsOn = 0, title = "캘린더", onCardCl
                   ? "bg-gray-50 text-gray-300"
                   : isPast
                   ? "bg-gray-50 text-gray-400"
-                  : "bg-white"
+                  : "bg-white",
               ].join(" ")}
-              title={todaysEvents.map(e => e.title).join(", ")}
+              title={todaysEvents
+                .map((e) => `${e.category} - ${e.title}`)
+                .join(", ")}
             >
               <div className="text-right text-xs">{day}</div>
-              <div className="mt-auto flex flex-wrap gap-1">
-                {todaysEvents.slice(0, 4).map((ev, i) => (
+              <div className="mt-auto flex flex-wrap gap-1 items-end">
+                {dotEvents.map((ev, i) => (
                   <span
                     key={i}
                     className={[
                       "inline-block w-2 h-2 rounded-full",
                       CATEGORY_COLORS[ev.category] || "bg-gray-400",
-                      isPast ? "opacity-50" : ""
+                      isPast ? "opacity-50" : "",
                     ].join(" ")}
                   />
                 ))}
-                {todaysEvents.length > 4 && (
-                  <span className="text-[10px] text-gray-500">
-                    +{todaysEvents.length - 4}
+                {extra > 0 && (
+                  <span className="text-[10px] text-gray-500 ml-auto">
+                    +{extra}
                   </span>
                 )}
               </div>
@@ -288,16 +414,27 @@ function Calendar({ events = [], weekStartsOn = 0, title = "캘린더", onCardCl
   );
 }
 
-/* --- HOME 콘텐츠 (API 연동) --- */
+/* --- HOME 콘텐츠 (추천 API + 달력용 일별 API 분리) --- */
 function HomeContent() {
-  const { events, loading, error } = useSeoulEvents();
   const navigate = useNavigate();
 
-  // 추천행사: 이미지가 있는 상위 몇 개
-  const featured = useMemo(() => {
-    const withImg = events.filter(e => e.img);
-    return (withImg.length ? withImg : events).slice(0, 4);
-  }, [events]);
+  // 1) 추천 행사
+  const {
+    events: recommended,
+    loading: loadingRec,
+    error: errorRec,
+  } = useRecommendedEvents(4);
+
+  // 2) 행사 캘린더
+  const [cursor, setCursor] = useState(() => new Date());
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth();
+
+  const {
+    dataByDay,
+    loading: loadingCal,
+    error: errorCal,
+  } = useCalendarMonth(year, month, 0, 4);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -320,7 +457,9 @@ function HomeContent() {
               <button
                 key={cat.id}
                 type="button"
-                onClick={() => navigate(`/browse?category=${encodeURIComponent(cat.name)}`)}
+                onClick={() =>
+                  navigate(`/browse?category=${encodeURIComponent(cat.name)}`)
+                }
                 className="group cursor-pointer rounded-lg shadow-md hover:shadow-lg transition bg-white p-4 flex flex-col items-center justify-center focus:outline-none focus:ring-2 focus:ring-gray-200"
                 aria-label={`${cat.name} 카테고리로 이동`}
                 title={`${cat.name}만 보기`}
@@ -340,36 +479,56 @@ function HomeContent() {
       {/* 추천 + 캘린더 */}
       <section className="p-6">
         <div className="grid md:grid-cols-2 gap-4">
-          {/* 추천 행사 (실데이터) */}
+          {/* 추천 행사 */}
           <div>
-            <h2 className="text-xl font-semibold mb-4">추천 행사</h2>
+            <h2 className="text-xl font-semibold mb-2">추천 행사</h2>
+            <p className="text-xs text-gray-500 mb-4"></p>
 
-            {loading && (
-              <div className="text-sm text-gray-500">불러오는 중…</div>
+            {loadingRec && (
+              <div className="text-sm text-gray-500">
+                추천 행사 불러오는 중…
+              </div>
             )}
-            {error && (
+            {errorRec && (
               <div className="text-sm text-red-600">
-                데이터를 불러오지 못했어요. {String(error.message || error)}
+                추천 행사를 불러오지 못했어요.{" "}
+                {String(errorRec.message || errorRec)}
               </div>
             )}
 
-            {!loading && !error && featured.length === 0 && (
-              <div className="text-sm text-gray-500">표시할 행사가 없어요.</div>
+            {!loadingRec && !errorRec && recommended.length === 0 && (
+              <div className="text-sm text-gray-500">
+                표시할 추천 행사가 없어요.
+              </div>
             )}
 
             <div className="grid md:grid-cols-1 gap-4">
-              {featured.map(ev => (
-                <div key={ev.id} className="bg-white shadow-md rounded-lg p-4 hover:shadow-lg transition">
+              {recommended.map((ev) => (
+                <div
+                  key={ev.id}
+                  className="bg-white shadow-md rounded-lg p-4 hover:shadow-lg transition"
+                >
                   {ev.img && (
-                    <img src={ev.img} alt={ev.title} className="rounded-md mb-3 w-full object-cover max-h-60" />
+                    <img
+                      src={ev.img}
+                      alt={ev.title}
+                      className="rounded-md mb-3 w-full object-cover max-h-60"
+                    />
                   )}
                   <h3 className="font-semibold text-lg">{ev.title}</h3>
                   <p className="text-sm text-gray-600 mt-1">
-                    📅 {ev.startDate}{ev.endDate ? ` ~ ${ev.endDate}` : ""}
+                    📅 {ev.startDate}
+                    {ev.endDate ? ` ~ ${ev.endDate}` : ""}
                   </p>
-                  <p className="text-sm text-gray-600">📍 {ev.place || ev.gu || "장소 미정"}</p>
+                  <p className="text-sm text-gray-600">
+                    📍 {ev.place || ev.gu || "장소 미정"}
+                  </p>
                   <div className="mt-2 inline-flex items-center gap-2">
-                    <span className={`px-2 py-0.5 text-xs rounded-full ${CATEGORY_COLORS[ev.category] || "bg-gray-200"} text-white`}>
+                    <span
+                      className={`px-2 py-0.5 text-xs rounded-full ${
+                        CATEGORY_COLORS[ev.category] || "bg-gray-200"
+                      } text-white`}
+                    >
                       {ev.category}
                     </span>
                     {ev.fee && (
@@ -380,7 +539,12 @@ function HomeContent() {
                   </div>
                   {ev.homepage && (
                     <div className="mt-2">
-                      <a href={ev.homepage} target="_blank" rel="noreferrer" className="text-sm underline">
+                      <a
+                        href={ev.homepage}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-sm underline"
+                      >
                         상세보기
                       </a>
                     </div>
@@ -390,13 +554,31 @@ function HomeContent() {
             </div>
           </div>
 
-          {/* 캘린더 (실데이터) */}
+          {/* 행사 캘린더 */}
           <div>
-            <h2 className="text-xl font-semibold mb-4">행사 캘린더</h2>
+            <h2 className="text-xl font-semibold mb-2">행사 캘린더</h2>
+            <p className="text-xs text-gray-500 mb-2"></p>
+
+            {loadingCal && (
+              <div className="text-sm text-gray-500 mb-2">
+                캘린더 데이터 불러오는 중…
+              </div>
+            )}
+            {errorCal && (
+              <div className="text-sm text-red-600 mb-2">
+                캘린더 데이터를 불러오지 못했어요.{" "}
+                {String(errorCal.message || errorCal)}
+              </div>
+            )}
+
             <Calendar
-              events={events}
+              year={year}
+              month={month}
+              dataByDay={dataByDay}
               weekStartsOn={0}
               onCardClick={() => navigate("/calendar")}
+              onPrevMonth={() => setCursor(new Date(year, month - 1, 1))}
+              onNextMonth={() => setCursor(new Date(year, month + 1, 1))}
             />
           </div>
         </div>
@@ -415,16 +597,20 @@ const MENU = [
   { to: "/mypage", label: "My Page" },
 ];
 
+/* ✅ 헤더 검색바: 검색 → BrowseEvents로 이동 */
 function SearchBar() {
+  const navigate = useNavigate();
   const [query, setQuery] = useState("");
-  const [result, setResult] = useState("");
 
-  const handleSearch = () => {
+  const goSearch = () => {
     const q = query.trim();
     if (!q) return;
-    setResult(`"${q}" 검색 결과를 표시합니다.`);
+    navigate(`/browse?q=${encodeURIComponent(q)}`);
   };
-  const handleKeyDown = (e) => { if (e.key === "Enter") handleSearch(); };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") goSearch();
+  };
 
   return (
     <div className="relative">
@@ -437,14 +623,19 @@ function SearchBar() {
         className="h-7 w-44 md:w-56 border rounded pl-8 pr-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-200"
         aria-label="검색어 입력"
       />
-      <button type="button" onClick={handleSearch} className="absolute right-2 top-1.5" aria-label="검색" title="검색">
-        <img src="/images/search.png" alt="" className="w-4 h-4 pointer-events-none select-none" />
+      <button
+        type="button"
+        onClick={goSearch}
+        className="absolute right-2 top-1.5"
+        aria-label="검색"
+        title="검색"
+      >
+        <img
+          src="/images/search.png"
+          alt=""
+          className="w-4 h-4 pointer-events-none select-none"
+        />
       </button>
-      {result && (
-        <div className="absolute right-0 mt-2 w-56 bg-white border rounded shadow p-2 text-sm text-gray-700 z-50">
-          {result}
-        </div>
-      )}
     </div>
   );
 }
@@ -457,8 +648,21 @@ function Layout({ children }) {
     <div className="min-h-screen bg-white">
       <header className="fixed top-0 left-0 right-0 h-12 border-b bg-white z-50">
         <div className="h-full flex items-center justify-between px-3">
-          <button className="p-1 rounded hover:bg-gray-100" onClick={() => setOpen(v => !v)} aria-label="toggle menu">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <button
+            className="p-1 rounded hover:bg-gray-100"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="toggle menu"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <line x1="3" y1="6" x2="21" y2="6" />
               <line x1="3" y1="12" x2="21" y2="12" />
               <line x1="3" y1="18" x2="21" y2="18" />
@@ -477,7 +681,11 @@ function Layout({ children }) {
         </div>
       </header>
 
-      <aside className={`fixed top-12 left-0 bottom-0 w-56 bg-black text-white overflow-y-auto transition-transform duration-200 z-40 ${open ? "translate-x-0" : "-translate-x-full"}`}>
+      <aside
+        className={`fixed top-12 left-0 bottom-0 w-56 bg-black text-white overflow-y-auto transition-transform duration-200 z-40 ${
+          open ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
         <nav className="flex flex-col py-4">
           {MENU.map((m) => (
             <NavLink
@@ -485,7 +693,10 @@ function Layout({ children }) {
               to={m.to}
               onClick={() => setOpen(false)}
               className={({ isActive }) =>
-                "px-4 py-3 text-sm " + (isActive ? "bg-white/10 font-semibold" : "opacity-90 hover:bg-white/10")
+                "px-4 py-3 text-sm " +
+                (isActive
+                  ? "bg-white/10 font-semibold"
+                  : "opacity-90 hover:bg-white/10")
               }
             >
               {m.label}
@@ -527,7 +738,10 @@ export default function App() {
           <Route path="/favorites" element={<Favorites />} />
           <Route path="/mypage" element={<MyPage />} />
           <Route path="/events/:id" element={<EventDetail />} />
-          <Route path="*" element={<div className="p-6">페이지를 찾을 수 없습니다.</div>} />
+          <Route
+            path="*"
+            element={<div className="p-6">페이지를 찾을 수 없습니다.</div>}
+          />
         </Routes>
       </Layout>
     </BrowserRouter>

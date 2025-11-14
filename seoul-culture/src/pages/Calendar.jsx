@@ -1,7 +1,12 @@
 // src/pages/Calendar.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { fetchSeoulAllEventsJSON } from "../lib/seoulApi.js";
+// - HOME의 캘린더와 동일한 방식으로 서울시 API를 사용
+//   ① 현재 달력에 보이는 날짜(최대 42일)에 대해서만, 날짜별로 API 호출(fetchSeoulDailyEvents)
+//      각 날짜는 START_INDEX=0, END_INDEX=4 로 일부만 가져오고 list_total_count 로 전체 개수 확인
+//   ② 상세 행사 목록은 선택한 날짜에 대해 페이지네이션 적용
+//      각 페이지마다 START_INDEX / END_INDEX 를 계산해서 그 페이지만 조회
 
+import React, { useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
+import { fetchSeoulDailyEvents } from "../lib/seoulApi.js";
 
 /* === 환경변수 === */
 const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
@@ -17,14 +22,42 @@ const CAT_COLOR = {
   기타: "bg-rose-500",
 };
 
-/* === 상위 카테고리 매핑 === */
+/* === 상위 카테고리 매핑 (App/Browse 와 동일 규칙) === */
 function toHighLevelCategory(codename = "", themecode = "") {
-  const c = String(codename);
-  if (["콘서트", "클래식", "국악", "무용", "연극", "뮤지컬/오페라", "축제-기타"].some(k => c.includes(k))) {
+  const c = String(codename || "");
+  const t = String(themecode || "");
+
+  if (
+    [
+      "공연",
+      "콘서트",
+      "클래식",
+      "국악",
+      "무용",
+      "연극",
+      "뮤지컬",
+      "오페라",
+      "음악회",
+      "페스티벌",
+      "축제",
+    ].some((k) => c.includes(k))
+  ) {
     return "공연";
   }
-  if (c.includes("전시/미술")) return "전시";
-  if (c.includes("교육/체험") || String(themecode).includes("교육")) return "교육/체험";
+
+  if (["전시", "미술", "갤러리", "아트", "사진전"].some((k) => c.includes(k))) {
+    return "전시";
+  }
+
+  if (
+    ["교육", "체험", "워크숍", "워크샵", "강좌", "강의", "세미나", "강연"].some((k) =>
+      c.includes(k)
+    ) ||
+    t.includes("교육")
+  ) {
+    return "교육/체험";
+  }
+
   return "기타";
 }
 
@@ -34,20 +67,6 @@ function ymd(date) {
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
-}
-function parseToDate(s = "") {
-  if (!s) return null;
-  const raw = String(s).trim();
-  if (/^\d{8}$/.test(raw)) {
-    const y = raw.slice(0, 4);
-    const m = raw.slice(4, 6);
-    const d = raw.slice(6, 8);
-    const dt = new Date(`${y}-${m}-${d}T00:00:00`);
-    return isNaN(dt) ? null : dt;
-  }
-  const normalized = raw.replaceAll(".", "-").split(" ")[0];
-  const dt = new Date(`${normalized}T00:00:00`);
-  return isNaN(dt) ? null : dt;
 }
 function normalizeRangeLabel(startStr = "", endStr = "") {
   const s = (startStr || "").replaceAll(".", "-");
@@ -74,89 +93,191 @@ function monthMatrix(year, monthIdx, weekStartsOn = 0) {
   return cells;
 }
 
-/* API → 프론트용 이벤트로 정규화 (날짜구간을 일 단위로 확장) */
-function normalizeFromAPI(jsonOrRows) {
-  const rows = Array.isArray(jsonOrRows)
-    ? jsonOrRows
-    : (jsonOrRows?.culturalEventInfo?.row || []);
-  return rows.map((r, i) => {
-    const startStr = r.STRTDATE || r.DATE;
-    const endStr = r.END_DATE || r.ENDDATE || r.END;
+/* === API row -> 캘린더용 이벤트 정규화 === */
+function mapRowToEvent(r, idx = 0) {
+  const startStr = r.STRTDATE || r.DATE;
+  const endStr = r.END_DATE || r.ENDDATE || r.END;
 
-    const start = parseToDate(startStr);
-    const end = parseToDate(endStr) || start; // 종료일 없으면 시작일 1일 행사로
-    const cat = toHighLevelCategory(r.CODENAME, r.THEMECODE);
+  const category = toHighLevelCategory(r.CODENAME, r.THEMECODE);
 
-    // 일자 목록(최대 31일 안전 제한)
-    const allDates = [];
-    if (start) {
-      const until = end && !isNaN(end) ? end : start;
-      const cursor = new Date(start);
-      let steps = 0;
-      while (cursor <= until && steps < 31) {
-        allDates.push(ymd(cursor));
-        cursor.setDate(cursor.getDate() + 1);
-        steps++;
-      }
-    }
-
-    return {
-      id: r.SVCID || `evt_${i}`,
-      title: r.TITLE || r.SVCNM || "무제",
-      category: cat,
-      place: r.PLACE || r.GUNAME || "장소 미정",
-      dateLabel: normalizeRangeLabel(startStr, endStr),
-      allDates, // 'YYYY-MM-DD' 배열
-      homepage: r.ORG_LINK || r.HMPG_ADDR,
-      fee: r.USE_FEE,
-    };
-  });
+  return {
+    id: r.SVCID || `evt_${idx}`,
+    title: r.TITLE || r.SVCNM || "무제",
+    category,
+    place: r.PLACE || r.GUNAME || "장소 미정",
+    dateLabel: normalizeRangeLabel(startStr, endStr),
+    homepage: r.ORG_LINK || r.HMPG_ADDR,
+    fee: r.USE_FEE,
+  };
 }
 
-/* 데이터 로딩 훅 */
-function useSeoulCalendarEvents() {
-  const [events, setEvents] = useState([]);
+/* === 1) 월 전체에 대한 "일별 요약" 조회 (HOME 과 동일 구조) === */
+/**
+ * dataByDay[dateKey] = {
+ *   events: Event[],      // 그 날짜 상위 N개 (N = perDayLimit)
+ *   totalCount: number,   // list_total_count
+ * }
+ */
+function useCalendarMonthDots(year, month, weekStartsOn = 0, perDayLimit = 4) {
+  const [dataByDay, setDataByDay] = useState({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    let abort = false;
     const ctrl = new AbortController();
+    let cancelled = false;
+
     (async () => {
-      setLoading(true);
-      setErr(null);
       try {
-        const rows = await fetchSeoulAllEventsJSON({
-          seoulKey: SEOUL_KEY,
-          useProxy: false,       // 프록시 쓰면 true
-          pageSize: 200,         // 200씩 페이징
-          hardLimit: 5000,       // 안전 상한(원하면 상향)
-          signal: ctrl.signal,
+        if (!SEOUL_KEY) {
+          throw new Error("REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인).");
+        }
+        setLoading(true);
+        setErr(null);
+        setDataByDay({});
+
+        const matrix = monthMatrix(year, month, weekStartsOn);
+        const dates = matrix.map((cell) => ymd(cell.date)); // 현재 달력에 보이는 날짜들(최대 42일)
+
+        const results = await Promise.all(
+          dates.map(async (dateKey) => {
+            try {
+              const json = await fetchSeoulDailyEvents({
+                seoulKey: SEOUL_KEY,
+                date: dateKey,
+                startIndex: 0,
+                endIndex: perDayLimit,
+                signal: ctrl.signal,
+              });
+              const info = json?.culturalEventInfo;
+              const rows = info?.row || [];
+              const totalCount = info?.list_total_count ?? rows.length;
+              const events = rows.map((r, idx) => mapRowToEvent(r, idx));
+              return { dateKey, events, totalCount };
+            } catch (e) {
+              console.error("Calendar month daily fetch error:", dateKey, e);
+              return { dateKey, events: [], totalCount: 0 };
+            }
+          })
+        );
+
+        if (cancelled) return;
+
+        const map = {};
+        results.forEach(({ dateKey, events, totalCount }) => {
+          map[dateKey] = { events, totalCount };
         });
-        const items = normalizeFromAPI(rows);
-        if (!abort) setEvents(items);
+        setDataByDay(map);
       } catch (e) {
-        if (!abort) setErr(e);
+        if (!cancelled) setErr(e);
       } finally {
-        if (!abort) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+
     return () => {
-      abort = true;
+      cancelled = true;
       ctrl.abort();
     };
-  }, []);
+  }, [year, month, weekStartsOn, perDayLimit]);
 
-  return { events, loading, error: err };
+  return { dataByDay, loading, error: err };
 }
 
+/* === 2) 선택한 날짜에 대한 페이지 단위 상세 조회 === */
+/**
+ * - dateKey: 'YYYY-MM-DD'
+ * - page: 1-based
+ * - pageSize: 상세 리스트 한 페이지당 개수
+ * - 각 page 마다 START_INDEX / END_INDEX 를 계산해서 그 범위만 조회
+ */
+const DETAIL_PAGE_SIZE = 20;
+
+function useDailyPagedEvents(dateKey, page, pageSize = DETAIL_PAGE_SIZE) {
+  const [events, setEvents] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    let cancelled = false;
+
+    (async () => {
+      if (!dateKey) {
+        setEvents([]);
+        setTotalCount(0);
+        setErr(null);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        if (!SEOUL_KEY) {
+          throw new Error("REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인).");
+        }
+        setLoading(true);
+        setErr(null);
+
+        // page 1 → 1~20, page 2 → 21~40 ... (오픈API는 1-based)
+        const start1 = (page - 1) * pageSize + 1;
+        const end1 = start1 + pageSize - 1;
+
+        const json = await fetchSeoulDailyEvents({
+          seoulKey: SEOUL_KEY,
+          date: dateKey,
+          startIndex: start1,
+          endIndex: end1,
+          signal: ctrl.signal,
+        });
+
+        if (cancelled) return;
+
+        const info = json?.culturalEventInfo;
+        const rows = info?.row || [];
+        const total = info?.list_total_count ?? rows.length;
+
+        const mapped = rows.map((r, idx) => mapRowToEvent(r, start1 - 1 + idx));
+
+        setEvents(mapped);
+        setTotalCount(total);
+      } catch (e) {
+        if (!cancelled) setErr(e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+    };
+  }, [dateKey, page, pageSize]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil((totalCount || events.length || 1) / pageSize)
+  );
+
+  return { events, totalCount, totalPages, loading, error: err };
+}
+
+/* === 페이지 컴포넌트 === */
 export default function CalendarPage() {
-  // ① 기본은 현재 년/월
   const today = new Date();
   const todayKey = ymd(today);
-  const [cursor, setCursor] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+
+  // ① 기본은 현재 년/월
+  const [cursor, setCursor] = useState(
+    new Date(today.getFullYear(), today.getMonth(), 1)
+  );
   const [category, setCategory] = useState("전체");
+  const [keywordInput, setKeywordInput] = useState("");
+  const [keyword, setKeyword] = useState("");
   const [activeDay, setActiveDay] = useState(null); // 'YYYY-MM-DD'
+  const [detailPage, setDetailPage] = useState(1);
+
+  const deferredKeyword = useDeferredValue(keyword);
 
   // 캘린더 박스의 실제 렌더 높이를 상세 패널에 복제
   const calBoxRef = useRef(null);
@@ -175,36 +296,57 @@ export default function CalendarPage() {
   const y = cursor.getFullYear();
   const m = cursor.getMonth();
 
-  // API 데이터 로드
-  const { events, loading, error } = useSeoulCalendarEvents();
+  // ② 월 전체 일별 요약 로딩 (HOME 과 동일)
+  const {
+    dataByDay,
+    loading: loadingMonth,
+    error: errorMonth,
+  } = useCalendarMonthDots(y, m, 0, 4);
 
   // ③ 달력 매트릭스
   const matrix = useMemo(() => monthMatrix(y, m, 0), [y, m]);
 
-  // 이번 달에 해당하는 날짜들만 골라 날짜→이벤트 매핑
-  const byDay = useMemo(() => {
-    const map = {};
-    const ymPrefix = `${y}-${String(m + 1).padStart(2, "0")}-`;
-    const pool = category === "전체" ? events : events.filter(e => e.category === category);
+  // ④ 선택된 날짜의 상세(페이지네이션) 로딩
+  useEffect(() => {
+    // 날짜 변경되면 1페이지부터
+    setDetailPage(1);
+  }, [activeDay, category, keyword]);
 
-    for (const e of pool) {
-      for (const d of e.allDates || []) {
-        if (d.startsWith(ymPrefix)) {
-          (map[d] ||= []).push(e);
-        }
-      }
+  const {
+    events: dailyEventsRaw,
+    totalCount: dailyTotalCount,
+    totalPages: dailyTotalPages,
+    loading: loadingDaily,
+    error: errorDaily,
+  } = useDailyPagedEvents(activeDay, detailPage, DETAIL_PAGE_SIZE);
+
+  // 카테고리/검색 필터 상세 적용
+  const filteredDailyEvents = useMemo(() => {
+    let arr = dailyEventsRaw;
+    if (category !== "전체") {
+      arr = arr.filter((e) => e.category === category);
     }
-    return map;
-  }, [events, category, y, m]);
+    const q = (deferredKeyword || "").trim().toLowerCase();
+    if (!q) return arr;
+    return arr.filter(
+      (e) =>
+        e.title.toLowerCase().includes(q) ||
+        (e.place || "").toLowerCase().includes(q)
+    );
+  }, [dailyEventsRaw, category, deferredKeyword]);
 
-  const selectedEventsAll = activeDay ? (byDay[activeDay] || []) : [];
   const ymLabel = `${y}.${String(m + 1).padStart(2, "0")}`;
+
+  const handleSearchSubmit = (e) => {
+    e.preventDefault();
+    setKeyword(keywordInput);
+  };
 
   return (
     <div className="min-h-screen bg-white px-6 py-8 max-w-6xl mx-auto">
-      <h2 className="text-2xl font-semibold mb-4">Calendar</h2>
+      <h2 className="text-2xl font-semibold mb-4">캘린더</h2>
 
-      {/* 컨트롤: 년월/카테고리 */}
+      {/* 컨트롤: 년월/카테고리/검색 */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center mb-4">
         {/* 년월 선택 */}
         <div className="flex items-stretch">
@@ -242,9 +384,9 @@ export default function CalendarPage() {
           value={category}
           onChange={(e) => {
             setCategory(e.target.value);
-            setActiveDay(null);
+            // activeDay 는 유지 (선택한 날짜 내에서만 카테고리 필터)
           }}
-          className="border rounded px-3 py-2 w-56"
+          className="border rounded px-3 py-2 w-40"
         >
           {CATEGORIES.map((c) => (
             <option key={c} value={c}>
@@ -252,13 +394,37 @@ export default function CalendarPage() {
             </option>
           ))}
         </select>
+
+        {/* 검색(상세 목록용) */}
+        <form onSubmit={handleSearchSubmit} className="flex-1">
+          <div className="relative">
+            <input
+              value={keywordInput}
+              onChange={(e) => setKeywordInput(e.target.value)}
+              placeholder="행사명, 장소로 검색 (선택한 날짜의 목록 내에서)"
+              className="w-full border rounded-md pl-3 pr-10 py-2"
+            />
+            <button
+              type="submit"
+              aria-label="검색"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-gray-50"
+            >
+              <img src="/images/search.png" alt="" className="w-4 h-4" />
+            </button>
+          </div>
+        </form>
       </div>
 
-      {/* 로딩/에러 */}
-      {loading && <div className="mb-4 text-sm text-gray-500">실시간 데이터를 불러오는 중…</div>}
-      {error && (
+      {/* 로딩/에러 (월 단위) */}
+      {loadingMonth && (
+        <div className="mb-4 text-sm text-gray-500">
+          달력 데이터를 불러오는 중…
+        </div>
+      )}
+      {errorMonth && (
         <div className="mb-4 text-sm text-red-600">
-          데이터를 불러오지 못했어요. {String(error?.message || error)}
+          달력 데이터를 불러오지 못했어요.{" "}
+          {String(errorMonth?.message || errorMonth)}
         </div>
       )}
 
@@ -269,10 +435,13 @@ export default function CalendarPage() {
           <div ref={calBoxRef} className="border rounded-lg p-4">
             {/* 요일 헤더 */}
             <div className="text-sm text-gray-600 mb-2">
-              {new Date(y, m, 1).toLocaleString("en-US", { month: "long", year: "numeric" })}
+              {new Date(y, m, 1).toLocaleString("ko-KR", {
+                month: "long",
+                year: "numeric",
+              })}
             </div>
             <div className="grid grid-cols-7 text-center text-xs text-gray-600 mb-1">
-              {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((w) => (
+              {["일", "월", "화", "수", "목", "금", "토"].map((w) => (
                 <div key={w} className="py-1">
                   {w}
                 </div>
@@ -283,9 +452,16 @@ export default function CalendarPage() {
               {matrix.map(({ date, inMonth }, idx) => {
                 const key = ymd(date);
                 const day = date.getDate();
-                const dayEvents = inMonth ? (byDay[key] || []) : [];
+                const dayData = dataByDay[key] || { events: [], totalCount: 0 };
+                const allDayEvents = dayData.events || [];
+
+                const dayEvents =
+                  category === "전체"
+                    ? allDayEvents
+                    : allDayEvents.filter((e) => e.category === category);
+
                 const isToday = key === todayKey;
-                const isPast = inMonth && key < todayKey; // 지난 날짜 회색/비활성
+                const isPast = inMonth && key < todayKey;
                 const isActive = activeDay === key;
 
                 return (
@@ -296,16 +472,22 @@ export default function CalendarPage() {
                     className={[
                       "aspect-square rounded-md border p-1 text-left",
                       !inMonth
-                        ? "bg-gray-50 text-gray-400 cursor-default"
+                        ? "bg-gray-50 text-gray-300 cursor-default"
                         : isPast
                         ? "bg-gray-50 text-gray-400 cursor-not-allowed"
                         : "bg-white hover:bg-gray-50",
                       isActive ? "ring-2 ring-black" : "",
                     ].join(" ")}
-                    title={inMonth && dayEvents.length ? `${dayEvents.length}개 행사` : undefined}
+                    title={
+                      inMonth && dayData.totalCount
+                        ? `${dayData.totalCount}개 행사`
+                        : undefined
+                    }
                   >
                     <div className="flex items-center justify-between text-xs">
-                      <span className={isToday ? "font-bold underline" : ""}>{day}</span>
+                      <span className={isToday ? "font-bold underline" : ""}>
+                        {day}
+                      </span>
                       <span className="flex gap-0.5">
                         {dayEvents.slice(0, 3).map((e, i) => (
                           <i
@@ -317,6 +499,12 @@ export default function CalendarPage() {
                             ].join(" ")}
                           />
                         ))}
+                        {dayData.totalCount > dayEvents.length &&
+                          dayEvents.length > 0 && (
+                            <span className="text-[9px] text-gray-400 ml-0.5">
+                              +{dayData.totalCount - dayEvents.length}
+                            </span>
+                          )}
                       </span>
                     </div>
                     <div className="mt-3" />
@@ -337,7 +525,7 @@ export default function CalendarPage() {
           </div>
         </div>
 
-        {/* 상세: 캘린더와 같은 높이 + 스크롤 */}
+        {/* 상세: 캘린더와 같은 높이 + 스크롤 + 페이지네이션 */}
         <div className="lg:col-span-6">
           <div
             className="border rounded-lg bg-gray-50 overflow-auto"
@@ -346,41 +534,94 @@ export default function CalendarPage() {
               minHeight: panelH ? undefined : "280px",
             }}
           >
-            <div className="p-4">
+            <div className="p-4 flex flex-col h-full">
               {!activeDay ? (
-                <div className="text-sm text-gray-500 h-40 grid place-items-center">
+                <div className="text-sm text-gray-500 flex-1 grid place-items-center">
                   날짜를 선택하면 해당 날짜의 행사가 표시됩니다.
                 </div>
-              ) : selectedEventsAll.length === 0 ? (
-                <div className="text-sm text-gray-500 h-40 grid place-items-center">
-                  {activeDay} 일정이 없습니다.
+              ) : loadingDaily ? (
+                <div className="text-sm text-gray-500 flex-1 grid place-items-center">
+                  {activeDay}의 행사를 불러오는 중…
+                </div>
+              ) : errorDaily ? (
+                <div className="text-sm text-red-600 flex-1 grid place-items-center">
+                  데이터를 불러오지 못했어요.{" "}
+                  {String(errorDaily?.message || errorDaily)}
+                </div>
+              ) : filteredDailyEvents.length === 0 ? (
+                <div className="text-sm text-gray-500 flex-1 grid place-items-center">
+                  {activeDay}에 조건에 맞는 행사가 없습니다.
                 </div>
               ) : (
-                <ul className="space-y-3">
-                  {selectedEventsAll.map((e) => (
-                    <li key={e.id} className="bg-white border rounded p-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-semibold">{e.title}</h4>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100">{e.category}</span>
-                      </div>
-                      <p className="text-sm text-gray-600 mt-1">📅 {e.dateLabel}</p>
-                      <p className="text-sm text-gray-600">📍 {e.place}</p>
-                      {e.fee && <p className="text-xs text-gray-500 mt-1">요금: {e.fee}</p>}
-                      {e.homepage && (
-                        <div className="mt-2 text-right">
-                          <a
-                            className="text-xs underline underline-offset-4"
-                            href={e.homepage}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            상세보기
-                          </a>
+                <>
+                  <div className="mb-3 text-sm text-gray-700">
+                    <span className="font-semibold">{activeDay}</span>{" "}
+                    기준 행사 목록
+                  </div>
+                  <ul className="space-y-3 flex-1 overflow-auto pr-1">
+                    {filteredDailyEvents.map((e) => (
+                      <li key={e.id} className="bg-white border rounded p-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-semibold">{e.title}</h4>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100">
+                            {e.category}
+                          </span>
                         </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                        <p className="text-sm text-gray-600 mt-1">
+                          📅 {e.dateLabel}
+                        </p>
+                        <p className="text-sm text-gray-600">📍 {e.place}</p>
+                        {e.fee && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            요금: {e.fee}
+                          </p>
+                        )}
+                        {e.homepage && (
+                          <div className="mt-2 text-right">
+                            <a
+                              className="text-xs underline underline-offset-4"
+                              href={e.homepage}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              상세보기
+                            </a>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* 페이지네이션 */}
+                  <div className="mt-3 flex items-center justify-between text-xs text-gray-600">
+                    <div>
+                      총 {dailyTotalCount}건 · {detailPage}/{dailyTotalPages}
+                      페이지
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() =>
+                          setDetailPage((p) => Math.max(1, p - 1))
+                        }
+                        disabled={detailPage === 1}
+                        className="px-3 py-1.5 rounded border bg-white disabled:opacity-40"
+                      >
+                        이전
+                      </button>
+                      <button
+                        onClick={() =>
+                          setDetailPage((p) =>
+                            Math.min(dailyTotalPages, p + 1)
+                          )
+                        }
+                        disabled={detailPage === dailyTotalPages}
+                        className="px-3 py-1.5 rounded border bg-white disabled:opacity-40"
+                      >
+                        다음
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>

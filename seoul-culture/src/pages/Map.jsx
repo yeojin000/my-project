@@ -14,7 +14,7 @@ const AREAS = [
   "강서구", "구로구", "금천구", "영등포구", "동작구",
   "관악구", "서초구", "강남구", "송파구", "강동구"
 ];
-const QUICK_RANGES = ["전체", "오늘", "이번 주", "이번 달"];
+const QUICK_RANGES = ["오늘", "이번 주", "이번 달"];
 
 /* === 서울시 행정구 중심 좌표(대략) === */
 const GU_CENTER = {
@@ -92,8 +92,9 @@ const loadKakao = () =>
 /* === 서울시 문화행사 OpenAPI(JSON) ===
    프록시를 쓰지 않고 .env 키로 직접 호출
 */
-const SEOUL_API_URL = SEOUL_KEY
-  ? `http://openapi.seoul.go.kr:8088/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo/1/200/`
+const PAGE_SIZE = 200;
+const SEOUL_API_BASE = SEOUL_KEY
+  ? `http://openapi.seoul.go.kr:8088/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo`
   : null;
 
 /* === 상위 카테고리 매핑 === */
@@ -187,8 +188,8 @@ export default function MapPage() {
   /* 필터 상태 */
   const [category, setCategory] = useState("전체");
   const [area, setArea] = useState("전체");
-  const [quick, setQuick] = useState("전체");
-  const [startDate, setStartDate] = useState(""); // YYYY-MM-DD
+  const [quick, setQuick] = useState("오늘");
+  const [startDate, setStartDate] = useState(ymd(new Date())); //기본 : 오늘
   const [endDate, setEndDate] = useState("");
 
   /* 데이터/지도 상태 */
@@ -205,57 +206,123 @@ export default function MapPage() {
   const kakaoRef = useRef(null);
 
   /* Kakao + 데이터 로드 */
-  useEffect(() => {
-    let disposed = false;
-    (async () => {
-      try {
-        const kakao = await loadKakao();
-        if (disposed) return;
-        kakaoRef.current = kakao;
+ useEffect(() => {
+  let disposed = false;
 
-        const center = new kakao.maps.LatLng(37.5665, 126.9780);
-        if (mapEl.current) {
-          const map = new kakao.maps.Map(mapEl.current, { center, level: 7 });
-          mapRef.current = map;
+  (async () => {
+    try {
+      const kakao = await loadKakao();
+      if (disposed) return;
+      kakaoRef.current = kakao;
+
+      const center = new kakao.maps.LatLng(37.5665, 126.9780);
+      if (mapEl.current) {
+        const map = new kakao.maps.Map(mapEl.current, { center, level: 7 });
+        mapRef.current = map;
+      }
+
+      setLoading(true);
+      setErr(null);
+
+      if (!SEOUL_API_BASE) {
+        throw new Error("REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인).");
+      }
+
+      // 사용자가 지정한 시작일 (없으면 오늘 기준)
+      const userStartISO = startDate || ymd(new Date());
+      const userStart = new Date(userStartISO + "T00:00:00");
+
+      let pageStart = 1;
+      const allRows = [];
+      let stop = false;
+
+      while (!stop) {
+        const pageEnd = pageStart + PAGE_SIZE - 1;
+        const url = `${SEOUL_API_BASE}/${pageStart}/${pageEnd}/`;
+
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const json = await res.json();
+        const rows = json?.culturalEventInfo?.row || [];
+
+        // 더 이상 데이터가 없으면 종료
+        if (rows.length === 0) break;
+
+        allRows.push(...rows);
+
+        // *** 중요: 가장 오래된(리스트의 마지막) 행사 종료일 체크 ***
+        const last = rows[rows.length - 1];
+        const endStr =
+          last.END_DATE ||
+          last.ENDDATE ||
+          last.END ||
+          last.STRTDATE ||
+          last.DATE;
+        const lastEnd = parseToDate(endStr);
+
+        if (lastEnd && lastEnd < userStart) {
+          // 사용자가 지정한 시작일보다 과거인 행사가 등장 -> 더 이상 볼 필요 없음
+          stop = true;
+        } else {
+          // 다음 페이지로 이동
+          pageStart += PAGE_SIZE;
         }
 
-        setLoading(true);
-        if (!SEOUL_API_URL) throw new Error("REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인).");
-        const res = await fetch(SEOUL_API_URL, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        const items = normalizeEvents(json);
-        if (!disposed) setEvents(items);
-      } catch (e) {
-        if (!disposed) setErr(e);
-      } finally {
-        if (!disposed) setLoading(false);
+        if (disposed) return;
       }
-    })();
-    return () => { disposed = true; };
-  }, []);
 
-  /* 빠른 기간 → 날짜 반영 */
-  useEffect(() => {
-    const today = new Date();
-    if (quick === "전체") { setStartDate(""); setEndDate(""); return; }
-    if (quick === "오늘") {
-      const k = ymd(today); setStartDate(k); setEndDate(k); return;
+      // 기존 normalizeEvents는 json 전체를 받도록 되어 있으니,
+      // 동일 형태의 객체를 만들어서 재사용
+      const items = normalizeEvents({
+        culturalEventInfo: { row: allRows },
+      });
+
+      if (!disposed) setEvents(items);
+    } catch (e) {
+      if (!disposed) setErr(e);
+    } finally {
+      if (!disposed) setLoading(false);
     }
-    if (quick === "이번 주") {
-      const day = today.getDay(); // 0:일
-      const diffToMon = day === 0 ? -6 : 1 - day;
-      const mon = new Date(today); mon.setDate(today.getDate() + diffToMon);
-      const sun = new Date(mon);   sun.setDate(mon.getDate() + 6);
-      setStartDate(ymd(mon)); setEndDate(ymd(sun)); return;
-    }
-    if (quick === "이번 달") {
-      const y = today.getFullYear(), m = today.getMonth();
-      const s = new Date(y, m, 1);
-      const e = new Date(y, m + 1, 0);
-      setStartDate(ymd(s)); setEndDate(ymd(e)); return;
-    }
-  }, [quick]);
+  })();
+
+  return () => {
+    disposed = true;
+  };
+}, [startDate]); // 🔸 startDate가 바뀔 때마다 필요한 범위만 다시 조회
+
+
+ useEffect(() => {
+  if (!quick) return;  // 빠른 기간 선택이 없는(커스텀) 상태면 아무것도 안 함
+
+  const today = new Date();
+
+  if (quick === "오늘") {
+    const k = ymd(today);
+    setStartDate(k);
+    setEndDate(k);
+    return;
+  }
+
+  if (quick === "이번 주") {
+    const day = today.getDay(); // 0:일
+    const diffToMon = day === 0 ? -6 : 1 - day;
+    const mon = new Date(today); mon.setDate(today.getDate() + diffToMon);
+    const sun = new Date(mon);   sun.setDate(mon.getDate() + 6);
+    setStartDate(ymd(mon));
+    setEndDate(ymd(sun));
+    return;
+  }
+
+  if (quick === "이번 달") {
+    const y = today.getFullYear(), m = today.getMonth();
+    const s = new Date(y, m, 1);
+    const e = new Date(y, m + 1, 0);
+    setStartDate(ymd(s));
+    setEndDate(ymd(e));
+    return;
+  }
+}, [quick]);
 
   /* 지역 변경 → 지도 중심 이동 */
   useEffect(() => {
@@ -515,14 +582,14 @@ export default function MapPage() {
             <input
               type="date"
               value={startDate}
-              onChange={(e) => { setStartDate(e.target.value); setQuick("전체"); }}
+              onChange={(e) => { setStartDate(e.target.value); setQuick(""); }}
               className="border rounded px-2 py-1 text-sm w-full"
             />
             <span className="text-sm text-gray-500">~</span>
             <input
               type="date"
               value={endDate}
-              onChange={(e) => { setEndDate(e.target.value); setQuick("전체"); }}
+              onChange={(e) => { setEndDate(e.target.value); setQuick(""); }}
               className="border rounded px-2 py-1 text-sm w-full"
             />
           </div>
