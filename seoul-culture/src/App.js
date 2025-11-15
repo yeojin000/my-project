@@ -56,6 +56,22 @@ function formatDateKey(date) {
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
+
+function formatDateLabel(dateKey) {
+  try {
+    const d = new Date(`${dateKey}T00:00:00`);
+    if (isNaN(d)) return dateKey;
+    return d.toLocaleDateString("ko-KR", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      weekday: "short",
+    });
+  } catch {
+    return dateKey;
+  }
+}
+
 function getMonthMatrix(year, monthIndex, weekStartsOn = 0) {
   const first = new Date(year, monthIndex, 1);
   const last = new Date(year, monthIndex + 1, 0);
@@ -283,16 +299,17 @@ function useCalendarMonth(year, month, weekStartsOn = 0, perDayLimit = 4) {
   return { dataByDay, loading, error: err };
 }
 
-/* --- Calendar 컴포넌트 --- */
+/* --- Calendar 컴포넌트 (카드 클릭 이동 X, 날짜 클릭 → 팝업용 콜백) --- */
 function Calendar({
   year,
   month,
   dataByDay = {},
   weekStartsOn = 0,
   title = "캘린더",
-  onCardClick,
   onPrevMonth,
   onNextMonth,
+  onDayClick,
+  selectedDateKey,
 }) {
   const todayKey = formatDateKey(new Date());
   const matrix = useMemo(
@@ -306,11 +323,7 @@ function Calendar({
       : ["일", "월", "화", "수", "목", "금", "토"];
 
   return (
-    <div
-      className="bg-white shadow-md rounded-lg p-4 hover:shadow-lg transition cursor-pointer"
-      onClick={onCardClick}
-      title="전체 캘린더 보기"
-    >
+    <div className="bg-white shadow-md rounded-lg p-4 hover:shadow-lg transition">
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-semibold text-lg">{title}</h3>
         <div className="flex items-center gap-2">
@@ -363,21 +376,38 @@ function Calendar({
           const extra = totalCount - dotEvents.length;
 
           const isPast = inCurrentMonth && key < todayKey;
+          const isSelected = selectedDateKey && selectedDateKey === key;
+
+          const baseClasses = [
+            "aspect-square rounded-md border p-1 flex flex-col",
+            !inCurrentMonth
+              ? "bg-gray-50 text-gray-300"
+              : isPast
+              ? "bg-gray-50 text-gray-400"
+              : "bg-white",
+          ];
+
+          if (inCurrentMonth) {
+            baseClasses.push(
+              "cursor-pointer hover:ring-1 hover:ring-indigo-300 hover:border-indigo-300"
+            );
+          }
+
+          if (isSelected) {
+            baseClasses.push("ring-2 ring-indigo-500 border-indigo-500");
+          }
 
           return (
             <div
               key={idx}
-              className={[
-                "aspect-square rounded-md border p-1 flex flex-col",
-                !inCurrentMonth
-                  ? "bg-gray-50 text-gray-300"
-                  : isPast
-                  ? "bg-gray-50 text-gray-400"
-                  : "bg-white",
-              ].join(" ")}
+              className={baseClasses.join(" ")}
               title={todaysEvents
                 .map((e) => `${e.category} - ${e.title}`)
                 .join(", ")}
+              onClick={() => {
+                if (!inCurrentMonth) return;
+                onDayClick?.(key);
+              }}
             >
               <div className="text-right text-xs">{day}</div>
               <div className="mt-auto flex flex-wrap gap-1 items-end">
@@ -436,6 +466,20 @@ function HomeContent() {
     error: errorCal,
   } = useCalendarMonth(year, month, 0, 4);
 
+  // 3) 날짜 클릭 시 레이어 팝업
+  const [popupDateKey, setPopupDateKey] = useState(null);
+
+  const handleDayClick = (dateKey) => {
+    setPopupDateKey(dateKey);
+  };
+
+  const closePopup = () => setPopupDateKey(null);
+
+  const popupDayData = popupDateKey ? dataByDay[popupDateKey] || {} : {};
+  const popupEvents = popupDayData.events || [];
+  const popupTotalCount =
+    popupDayData.totalCount ?? popupEvents.length ?? 0;
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Hero */}
@@ -482,7 +526,9 @@ function HomeContent() {
           {/* 추천 행사 */}
           <div>
             <h2 className="text-xl font-semibold mb-2">추천 행사</h2>
-            <p className="text-xs text-gray-500 mb-4"></p>
+            <p className="text-xs text-gray-500 mb-4">
+              서울시 문화 행사 중 일부를 추천으로 보여줍니다.
+            </p>
 
             {loadingRec && (
               <div className="text-sm text-gray-500">
@@ -503,61 +549,87 @@ function HomeContent() {
             )}
 
             <div className="grid md:grid-cols-1 gap-4">
-              {recommended.map((ev) => (
-                <div
-                  key={ev.id}
-                  className="bg-white shadow-md rounded-lg p-4 hover:shadow-lg transition"
-                >
-                  {ev.img && (
-                    <img
-                      src={ev.img}
-                      alt={ev.title}
-                      className="rounded-md mb-3 w-full object-cover max-h-60"
-                    />
-                  )}
-                  <h3 className="font-semibold text-lg">{ev.title}</h3>
-                  <p className="text-sm text-gray-600 mt-1">
-                    📅 {ev.startDate}
-                    {ev.endDate ? ` ~ ${ev.endDate}` : ""}
-                  </p>
-                  <p className="text-sm text-gray-600">
-                    📍 {ev.place || ev.gu || "장소 미정"}
-                  </p>
-                  <div className="mt-2 inline-flex items-center gap-2">
-                    <span
-                      className={`px-2 py-0.5 text-xs rounded-full ${
-                        CATEGORY_COLORS[ev.category] || "bg-gray-200"
-                      } text-white`}
-                    >
-                      {ev.category}
-                    </span>
-                    {ev.fee && (
-                      <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700">
-                        {ev.fee}
+              {recommended.map((ev) => {
+                const handleOpenDetail = () => {
+                  if (!ev.homepage) return;
+                  window.open(ev.homepage, "_blank", "noopener,noreferrer");
+                };
+
+                return (
+                  <div
+                    key={ev.id}
+                    className="bg-white shadow-md rounded-lg p-4 hover:shadow-lg transition"
+                  >
+                    {ev.img && (
+                      <button
+                        type="button"
+                        onClick={handleOpenDetail}
+                        className="block w-full text-left"
+                      >
+                        <img
+                          src={ev.img}
+                          alt={ev.title}
+                          className="rounded-md mb-3 w-full object-cover max-h-60 hover:opacity-90 transition"
+                        />
+                      </button>
+                    )}
+                    <h3 className="font-semibold text-lg">
+                      {ev.homepage ? (
+                        <button
+                          type="button"
+                          onClick={handleOpenDetail}
+                          className="text-left w-full hover:underline"
+                        >
+                          {ev.title}
+                        </button>
+                      ) : (
+                        ev.title
+                      )}
+                    </h3>
+                    <p className="text-sm text-gray-600 mt-1">
+                      📅 {ev.startDate}
+                      {ev.endDate ? ` ~ ${ev.endDate}` : ""}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      📍 {ev.place || ev.gu || "장소 미정"}
+                    </p>
+                    <div className="mt-2 inline-flex items-center gap-2">
+                      <span
+                        className={`px-2 py-0.5 text-xs rounded-full ${
+                          CATEGORY_COLORS[ev.category] || "bg-gray-200"
+                        } text-white`}
+                      >
+                        {ev.category}
                       </span>
+                      {ev.fee && (
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700">
+                          {ev.fee}
+                        </span>
+                      )}
+                    </div>
+                    {ev.homepage && (
+                      <div className="mt-4 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleOpenDetail}
+                          className="px-4 py-2 text-sm font-semibold rounded-md bg-gray-900 text-white hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-300"
+                        >
+                          상세 보기
+                        </button>
+                      </div>
                     )}
                   </div>
-                  {ev.homepage && (
-                    <div className="mt-2">
-                      <a
-                        href={ev.homepage}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-sm underline"
-                      >
-                        상세보기
-                      </a>
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
           {/* 행사 캘린더 */}
           <div>
             <h2 className="text-xl font-semibold mb-2">행사 캘린더</h2>
-            <p className="text-xs text-gray-500 mb-2"></p>
+            <p className="text-xs text-gray-500 mb-2">
+              날짜를 클릭하면 해당 날짜의 행사 목록을 바로 확인할 수 있어요.
+            </p>
 
             {loadingCal && (
               <div className="text-sm text-gray-500 mb-2">
@@ -576,13 +648,100 @@ function HomeContent() {
               month={month}
               dataByDay={dataByDay}
               weekStartsOn={0}
-              onCardClick={() => navigate("/calendar")}
-              onPrevMonth={() => setCursor(new Date(year, month - 1, 1))}
-              onNextMonth={() => setCursor(new Date(year, month + 1, 1))}
+              onPrevMonth={() => {
+                setCursor(new Date(year, month - 1, 1));
+                setPopupDateKey(null);
+              }}
+              onNextMonth={() => {
+                setCursor(new Date(year, month + 1, 1));
+                setPopupDateKey(null);
+              }}
+              onDayClick={handleDayClick}
+              selectedDateKey={popupDateKey}
             />
           </div>
         </div>
       </section>
+
+      {/* 날짜 클릭 시 레이어 팝업 */}
+      {popupDateKey && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col">
+            <div className="px-5 py-3 border-b flex items-center justify-between">
+              <div>
+                <div className="text-sm text-gray-500">선택한 날짜</div>
+                <div className="text-base font-semibold">
+                  {formatDateLabel(popupDateKey)}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closePopup}
+                className="p-1 rounded hover:bg-gray-100"
+                aria-label="닫기"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="px-5 py-2 text-xs text-gray-500 border-b">
+              {popupTotalCount > popupEvents.length
+                ? `총 ${popupTotalCount}건 중 최대 ${popupEvents.length}건을 보여줍니다.`
+                : popupEvents.length > 0
+                ? `총 ${popupEvents.length}건의 행사가 있습니다.`
+                : "등록된 행사가 없습니다."}
+            </div>
+            <div className="px-5 pb-4 pt-2 overflow-y-auto">
+              {popupEvents.length === 0 ? (
+                <div className="text-sm text-gray-500 py-4">
+                  해당 날짜에 등록된 행사가 없습니다.
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {popupEvents.map((ev) => (
+                    <li
+                      key={ev.id}
+                      className="border rounded-md p-3 flex flex-col gap-1"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-semibold">
+                            {ev.title}
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            📍 {ev.place || ev.gu || "장소 미정"}
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            ⏰ {ev.time || "시간 정보 없음"}
+                          </div>
+                        </div>
+                        <span
+                          className={`px-2 py-0.5 text-[10px] rounded-full ${
+                            CATEGORY_COLORS[ev.category] || "bg-gray-300"
+                          } text-white whitespace-nowrap`}
+                        >
+                          {ev.category}
+                        </span>
+                      </div>
+                      {ev.homepage && (
+                        <div className="mt-1">
+                          <a
+                            href={ev.homepage}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center text-xs text-indigo-700 hover:underline"
+                          >
+                            상세 보기
+                          </a>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -81,7 +81,7 @@ function saveFavs(list) {
 }
 
 /* =========================
-   페이지 단위 API 로딩 훅
+   페이지 단위 API 로딩 (무한 "더 보기" 방식)
 ========================= */
 const PER_PAGE = 64;
 
@@ -112,13 +112,19 @@ function mapRowToEvent(r, globalIndex) {
   };
 }
 
-function useSeoulEventsPage(page) {
+/**
+ * 전체 데이터를 "페이지 단위로 점점 더 많이" 불러와서
+ * 누적(allEvents) + 검색/필터에 사용.
+ */
+function useSeoulEventsInfinite() {
   const [pages, setPages] = useState(() => ({})); // { [page]: Event[] }
+  const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
+    const page = currentPage;
     const ctrl = new AbortController();
     let cancelled = false;
 
@@ -173,15 +179,42 @@ function useSeoulEventsPage(page) {
       cancelled = true;
       ctrl.abort();
     };
-  }, [page, pages]);
+  }, [currentPage, pages]);
 
-  const events = pages[page] || [];
-  const totalPages = Math.max(
-    1,
-    Math.ceil((totalCount || events.length || 1) / PER_PAGE)
-  );
+  // 지금까지 로딩된 모든 페이지를 합친 배열
+  const allEvents = useMemo(() => {
+    const arr = [];
+    for (let p = 1; p <= currentPage; p++) {
+      if (pages[p]) arr.push(...pages[p]);
+    }
+    return arr;
+  }, [pages, currentPage]);
 
-  return { events, loading, error: err, totalCount, totalPages };
+  const totalPages = totalCount
+    ? Math.max(1, Math.ceil(totalCount / PER_PAGE))
+    : null;
+
+  const hasMore =
+    totalPages == null // 아직 totalCount 모르면 더 있는 걸로 가정
+      ? true
+      : currentPage < totalPages;
+
+  const loadMore = () => {
+    if (loading) return;
+    if (!hasMore) return;
+    setCurrentPage((p) => p + 1);
+  };
+
+  return {
+    events: allEvents,
+    loading,
+    error: err,
+    totalCount,
+    totalPages,
+    currentPage,
+    hasMore,
+    loadMore,
+  };
 }
 
 /* =========================
@@ -191,15 +224,16 @@ export default function BrowseEvents() {
   const [sp, setSp] = useSearchParams();
 
   // URL 쿼리 동기화
-  const initialCategory = decodeURIComponent(sp.get("category") || "전체");
+  const categoryParam = sp.get("category");
+  const initialCategory =
+    categoryParam && CATEGORIES.includes(categoryParam)
+      ? categoryParam
+      : "전체";
   const initialQuery = sp.get("q") || "";
 
-  const [category, setCategory] = useState(
-    CATEGORIES.includes(initialCategory) ? initialCategory : "전체"
-  );
+  const [category, setCategory] = useState(initialCategory);
   const [input, setInput] = useState(initialQuery);
   const [query, setQuery] = useState(initialQuery);
-  const [page, setPage] = useState(1);
 
   // 검색 입력 디바운스
   useEffect(() => {
@@ -207,52 +241,61 @@ export default function BrowseEvents() {
     return () => clearTimeout(t);
   }, [input]);
 
-  // 카테고리/검색 바뀌면 1페이지로 이동
-  useEffect(() => {
-    setPage(1);
-  }, [category, query]);
-
-  // 현재 페이지 데이터만 API로 로딩
-  const { events: pageEvents, loading, error, totalCount, totalPages } =
-    useSeoulEventsPage(page);
-
-  // 즐겨찾기
-  const [favSet, setFavSet] = useState(
-    () => new Set(loadFavs().map((x) => x.id))
-  );
-
-  // URL 유지
+  // URL 유지 (카테고리 / 검색어 -> 쿼리스트링 반영)
   useEffect(() => {
     const next = new URLSearchParams(sp);
-    if (category && category !== "전체")
-      next.set("category", encodeURIComponent(category));
+    if (category && category !== "전체") next.set("category", category);
     else next.delete("category");
+
     if (query) next.set("q", query);
     else next.delete("q");
+
     setSp(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, query]);
 
-  // 필터 + 검색 (현재 페이지 데이터 안에서만)
+  // 전체 데이터 무한 로딩 훅
+  const {
+    events: allEvents,
+    loading,
+    error,
+    totalCount,
+    totalPages,
+    currentPage,
+    hasMore,
+    loadMore,
+  } = useSeoulEventsInfinite();
+
   const deferredQuery = useDeferredValue(query);
+
+  // 카테고리 + 검색 필터 (현재까지 로딩된 전체 데이터에서 수행)
   const filtered = useMemo(() => {
     const pool =
       category === "전체"
-        ? pageEvents
-        : pageEvents.filter((e) => e.category === category);
+        ? allEvents
+        : allEvents.filter((e) => e.category === category);
+
     const q = (deferredQuery || "").trim().toLowerCase();
     if (!q) return pool;
+
     return pool.filter(
       (e) =>
         e.title.toLowerCase().includes(q) ||
         (e.place || "").toLowerCase().includes(q)
     );
-  }, [pageEvents, category, deferredQuery]);
+  }, [allEvents, category, deferredQuery]);
+
+  const initialLoading = loading && allEvents.length === 0;
 
   const onSubmit = (e) => {
     e.preventDefault();
     setQuery(input);
   };
+
+  // 즐겨찾기
+  const [favSet, setFavSet] = useState(
+    () => new Set(loadFavs().map((x) => x.id))
+  );
 
   const onHeartToggle = (ev) => {
     const list = loadFavs();
@@ -272,7 +315,6 @@ export default function BrowseEvents() {
           thumb: ev.thumb,
           homepage: ev.homepage,
           gu: ev.gu,
-   
           lat: ev.lat ?? null,
           lng: ev.lng ?? null,
         },
@@ -289,7 +331,7 @@ export default function BrowseEvents() {
         <div
           className="
             sticky 
-            top-[48px]   /* 헤더 높이에 맞게 조정, 필요하면 56px/72px 등으로 바꿔 */
+            top-[48px]   /* 헤더 높이에 맞게 조정 */
             z-20
             bg-white
             pt-4 pb-3
@@ -337,24 +379,25 @@ export default function BrowseEvents() {
         {/* ===== 본문 리스트 ===== */}
         <div className="mt-4">
           <div className="border rounded-lg p-4">
-            {loading && (
+            {initialLoading && (
               <div className="h-56 grid place-items-center text-gray-500">
                 불러오는 중…
               </div>
             )}
-            {error && (
+
+            {error && !initialLoading && (
               <div className="h-56 grid place-items-center text-red-600">
                 데이터를 불러오지 못했어요. {String(error.message || error)}
               </div>
             )}
 
-            {!loading && !error && filtered.length === 0 && (
+            {!initialLoading && !error && filtered.length === 0 && (
               <div className="h-56 grid place-items-center text-gray-500">
                 조건에 맞는 행사가 없습니다.
               </div>
             )}
 
-            {!loading && !error && filtered.length > 0 && (
+            {!initialLoading && !error && filtered.length > 0 && (
               <>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {filtered.map((ev) => (
@@ -367,28 +410,26 @@ export default function BrowseEvents() {
                   ))}
                 </div>
 
-                <div className="mt-6 flex items-center justify-between text-sm">
+                <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-sm">
                   <div className="text-gray-600">
-                    총 {totalCount || filtered.length}건 · {page}/{totalPages}
-                    페이지
+                    {totalCount
+                      ? `총 ${totalCount}건 중 현재 ${filtered.length}건 표시 (데이터 ${allEvents.length}건 로딩됨, ~${currentPage}/${totalPages}페이지)`
+                      : `현재 ${filtered.length}건 표시 중`}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      disabled={page === 1}
-                      className="px-3 py-1.5 rounded border disabled:opacity-50"
-                    >
-                      이전
-                    </button>
-                    <button
-                      onClick={() =>
-                        setPage((p) => Math.min(totalPages, p + 1))
-                      }
-                      disabled={page === totalPages}
-                      className="px-3 py-1.5 rounded border disabled:opacity-50"
-                    >
-                      다음
-                    </button>
+                  <div className="flex items-center gap-2 justify-end">
+                    {hasMore ? (
+                      <button
+                        onClick={loadMore}
+                        disabled={loading}
+                        className="px-4 py-1.5 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        {loading ? "더 불러오는 중…" : "더 보기"}
+                      </button>
+                    ) : (
+                      <span className="text-gray-400">
+                        마지막까지 모두 불러왔습니다.
+                      </span>
+                    )}
                   </div>
                 </div>
               </>

@@ -33,10 +33,34 @@ function isFav(id) {
 
 // 임시 데이터(최초 완전 비었을 때 데모용)
 const SEED = [
-  { id: "ev001", title: "서울재즈페스티벌 2025", category: "공연", date: "2025-06-02 ~ 06-05", place: "올림픽공원" },
-  { id: "ev002", title: "시립미술관 여름 기획전", category: "전시", date: "2025-06-10 ~ 08-31", place: "서울시립미술관" },
-  { id: "ev003", title: "한강 돗자리 체험 클래스", category: "교육/체험", date: "2025-06-15", place: "여의도 한강공원" },
-  { id: "ev004", title: "청년 문화마켓", category: "기타", date: "2025-06-22", place: "성수동" },
+  {
+    id: "ev001",
+    title: "서울재즈페스티벌 2025",
+    category: "공연",
+    date: "2025-06-02 ~ 06-05",
+    place: "올림픽공원",
+  },
+  {
+    id: "ev002",
+    title: "시립미술관 여름 기획전",
+    category: "전시",
+    date: "2025-06-10 ~ 08-31",
+    place: "서울시립미술관",
+  },
+  {
+    id: "ev003",
+    title: "한강 돗자리 체험 클래스",
+    category: "교육/체험",
+    date: "2025-06-15",
+    place: "여의도 한강공원",
+  },
+  {
+    id: "ev004",
+    title: "청년 문화마켓",
+    category: "기타",
+    date: "2025-06-22",
+    place: "성수동",
+  },
 ];
 
 export default function Favorites() {
@@ -96,6 +120,16 @@ export default function Favorites() {
     setFavs(next);
   };
 
+  // ✅ 상세보기 동작
+  const handleOpenDetail = (item) => {
+    if (item.homepage) {
+      window.open(item.homepage, "_blank", "noopener,noreferrer");
+    } else {
+      // homepage 없으면 BrowseEvents에서 제목으로 검색
+      navigate(`/browse?q=${encodeURIComponent(item.title)}`);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-white px-6 py-8 max-w-6xl mx-auto">
       {/* 화면 1: 카테고리 그리드 (이미지 대신 텍스트 3~4개 미리보기) */}
@@ -112,7 +146,9 @@ export default function Favorites() {
                 role="button"
                 tabIndex={0}
                 onClick={() => goList(cat)}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") goList(cat); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") goList(cat);
+                }}
                 className="border rounded-lg p-4 bg-gray-50 hover:bg-gray-100 transition cursor-pointer"
                 title={`${cat} 즐겨찾기 보기`}
                 aria-label={`${cat} 즐겨찾기 목록으로 이동`}
@@ -172,14 +208,18 @@ export default function Favorites() {
                 className="border rounded pl-3 pr-8 py-1 text-sm"
                 aria-label="즐겨찾기 검색"
               />
-              <span className="absolute right-2 top-1/2 -translate-y-1/2 select-none">🔍</span>
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 select-none">
+                🔍
+              </span>
             </div>
           </div>
 
           {/* 목록 */}
           {list.length === 0 ? (
             <div className="text-gray-500 text-sm h-40 grid place-items-center border rounded">
-              {q ? "검색 결과가 없습니다." : "이 카테고리에 즐겨찾기한 행사가 없습니다."}
+              {q
+                ? "검색 결과가 없습니다."
+                : "이 카테고리에 즐겨찾기한 행사가 없습니다."}
             </div>
           ) : (
             <ul className="space-y-3">
@@ -191,19 +231,40 @@ export default function Favorites() {
                     className="flex items-center justify-between bg-gray-100 rounded px-4 py-3"
                   >
                     <div className="min-w-0">
-                      <div className="font-medium truncate">{it.title}</div>
+                      {/* ✅ 제목 클릭 시 상세보기 */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDetail(it)}
+                        className="font-medium truncate text-left hover:underline"
+                        title="상세보기"
+                      >
+                        {it.title}
+                      </button>
                       <div className="text-xs text-gray-700 mt-0.5">
                         📅 {it.date} · 📍 {it.place}
                       </div>
                     </div>
-                    <button
-                      onClick={() => onToggle(it)}
-                      className="ml-3 text-xl"
-                      title={fav ? "즐겨찾기 해제" : "즐겨찾기 추가"}
-                      aria-label={fav ? "즐겨찾기 해제" : "즐겨찾기 추가"}
-                    >
-                      {fav ? "❤️" : "🤍"}
-                    </button>
+
+                    <div className="flex items-center gap-2 ml-3">
+                      {/* ✅ 상세보기 버튼 */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDetail(it)}
+                        className="px-3 py-1 text-xs border rounded bg-white hover:bg-gray-50"
+                      >
+                        상세보기
+                      </button>
+
+                      {/* 즐겨찾기 토글 */}
+                      <button
+                        onClick={() => onToggle(it)}
+                        className="text-xl"
+                        title={fav ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+                        aria-label={fav ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+                      >
+                        {fav ? "❤️" : "🤍"}
+                      </button>
+                    </div>
                   </li>
                 );
               })}

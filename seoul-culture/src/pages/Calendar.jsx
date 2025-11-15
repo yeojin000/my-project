@@ -5,7 +5,13 @@
 //   ② 상세 행사 목록은 선택한 날짜에 대해 페이지네이션 적용
 //      각 페이지마다 START_INDEX / END_INDEX 를 계산해서 그 페이지만 조회
 
-import React, { useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useDeferredValue,
+} from "react";
 import { fetchSeoulDailyEvents } from "../lib/seoulApi.js";
 
 /* === 환경변수 === */
@@ -21,6 +27,20 @@ const CAT_COLOR = {
   "교육/체험": "bg-amber-500",
   기타: "bg-rose-500",
 };
+
+/* === 즐겨찾기 로컬스토리지 (Browse/MyPage와 동일 키) === */
+const LS_KEY_FAV = "sn_favorites";
+function loadFavs() {
+  try {
+    const raw = localStorage.getItem(LS_KEY_FAV);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+function saveFavs(list) {
+  localStorage.setItem(LS_KEY_FAV, JSON.stringify(list));
+}
 
 /* === 상위 카테고리 매핑 (App/Browse 와 동일 규칙) === */
 function toHighLevelCategory(codename = "", themecode = "") {
@@ -50,8 +70,8 @@ function toHighLevelCategory(codename = "", themecode = "") {
   }
 
   if (
-    ["교육", "체험", "워크숍", "워크샵", "강좌", "강의", "세미나", "강연"].some((k) =>
-      c.includes(k)
+    ["교육", "체험", "워크숍", "워크샵", "강좌", "강의", "세미나", "강연"].some(
+      (k) => c.includes(k)
     ) ||
     t.includes("교육")
   ) {
@@ -108,6 +128,10 @@ function mapRowToEvent(r, idx = 0) {
     dateLabel: normalizeRangeLabel(startStr, endStr),
     homepage: r.ORG_LINK || r.HMPG_ADDR,
     fee: r.USE_FEE,
+    gu: r.GUNAME,
+    thumb: r.MAIN_IMG || "/images/sample-event.jpg",
+    lat: r.LAT || null,
+    lng: r.LNG || null,
   };
 }
 
@@ -279,7 +303,7 @@ export default function CalendarPage() {
 
   const deferredKeyword = useDeferredValue(keyword);
 
-  // 캘린더 박스의 실제 렌더 높이를 상세 패널에 복제
+  // 캘린더 박스 높이를 상세 패널에 복제
   const calBoxRef = useRef(null);
   const [panelH, setPanelH] = useState(0);
 
@@ -296,22 +320,22 @@ export default function CalendarPage() {
   const y = cursor.getFullYear();
   const m = cursor.getMonth();
 
-  // ② 월 전체 일별 요약 로딩 (HOME 과 동일)
+  // 월 전체 일별 요약 로딩
   const {
     dataByDay,
     loading: loadingMonth,
     error: errorMonth,
   } = useCalendarMonthDots(y, m, 0, 4);
 
-  // ③ 달력 매트릭스
+  // 달력 매트릭스
   const matrix = useMemo(() => monthMatrix(y, m, 0), [y, m]);
 
-  // ④ 선택된 날짜의 상세(페이지네이션) 로딩
+  // 날짜/필터 변경 시 상세 페이지 초기화
   useEffect(() => {
-    // 날짜 변경되면 1페이지부터
     setDetailPage(1);
   }, [activeDay, category, keyword]);
 
+  // 선택한 날짜의 상세
   const {
     events: dailyEventsRaw,
     totalCount: dailyTotalCount,
@@ -340,6 +364,38 @@ export default function CalendarPage() {
   const handleSearchSubmit = (e) => {
     e.preventDefault();
     setKeyword(keywordInput);
+  };
+
+  // 즐겨찾기 (Calendar 메뉴에서도 추가 가능)
+  const [favSet, setFavSet] = useState(
+    () => new Set(loadFavs().map((x) => x.id))
+  );
+
+  const handleToggleFavorite = (ev) => {
+    const list = loadFavs();
+    const exists = list.some((x) => x.id === ev.id);
+    let next;
+    if (exists) {
+      next = list.filter((x) => x.id !== ev.id);
+    } else {
+      next = [
+        ...list,
+        {
+          id: ev.id,
+          title: ev.title,
+          category: ev.category,
+          date: ev.dateLabel,
+          place: ev.place,
+          thumb: ev.thumb || "/images/sample-event.jpg",
+          homepage: ev.homepage,
+          gu: ev.gu,
+          lat: ev.lat ?? null,
+          lng: ev.lng ?? null,
+        },
+      ];
+    }
+    saveFavs(next);
+    setFavSet(new Set(next.map((x) => x.id)));
   };
 
   return (
@@ -384,7 +440,7 @@ export default function CalendarPage() {
           value={category}
           onChange={(e) => {
             setCategory(e.target.value);
-            // activeDay 는 유지 (선택한 날짜 내에서만 카테고리 필터)
+            // activeDay는 유지 (선택한 날짜 내에서만 카테고리 필터)
           }}
           className="border rounded px-3 py-2 w-40"
         >
@@ -461,25 +517,24 @@ export default function CalendarPage() {
                     : allDayEvents.filter((e) => e.category === category);
 
                 const isToday = key === todayKey;
-                const isPast = inMonth && key < todayKey;
+                const isPast = key < todayKey; // 과거 날짜도 조회 가능하지만 스타일만 다르게
                 const isActive = activeDay === key;
 
                 return (
                   <button
                     key={idx}
-                    disabled={!inMonth || isPast}
                     onClick={() => setActiveDay(key)}
                     className={[
-                      "aspect-square rounded-md border p-1 text-left",
+                      "aspect-square rounded-md border p-1 text-left cursor-pointer",
                       !inMonth
-                        ? "bg-gray-50 text-gray-300 cursor-default"
+                        ? "bg-gray-50 text-gray-300"
                         : isPast
-                        ? "bg-gray-50 text-gray-400 cursor-not-allowed"
+                        ? "bg-gray-50 text-gray-400"
                         : "bg-white hover:bg-gray-50",
                       isActive ? "ring-2 ring-black" : "",
                     ].join(" ")}
                     title={
-                      inMonth && dayData.totalCount
+                      dayData.totalCount
                         ? `${dayData.totalCount}개 행사`
                         : undefined
                     }
@@ -525,7 +580,7 @@ export default function CalendarPage() {
           </div>
         </div>
 
-        {/* 상세: 캘린더와 같은 높이 + 스크롤 + 페이지네이션 */}
+        {/* 상세: 캘린더와 같은 높이 + 스크롤 + 페이지네이션 + 즐겨찾기 */}
         <div className="lg:col-span-6">
           <div
             className="border rounded-lg bg-gray-50 overflow-auto"
@@ -559,37 +614,66 @@ export default function CalendarPage() {
                     기준 행사 목록
                   </div>
                   <ul className="space-y-3 flex-1 overflow-auto pr-1">
-                    {filteredDailyEvents.map((e) => (
-                      <li key={e.id} className="bg-white border rounded p-3">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-semibold">{e.title}</h4>
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100">
-                            {e.category}
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-600 mt-1">
-                          📅 {e.dateLabel}
-                        </p>
-                        <p className="text-sm text-gray-600">📍 {e.place}</p>
-                        {e.fee && (
-                          <p className="text-xs text-gray-500 mt-1">
-                            요금: {e.fee}
-                          </p>
-                        )}
-                        {e.homepage && (
-                          <div className="mt-2 text-right">
-                            <a
-                              className="text-xs underline underline-offset-4"
-                              href={e.homepage}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              상세보기
-                            </a>
+                    {filteredDailyEvents.map((e) => {
+                      const isFav = favSet.has(e.id);
+                      return (
+                        <li
+                          key={e.id}
+                          className="bg-white border rounded p-3 relative"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 pr-2">
+                              <h4 className="font-semibold">{e.title}</h4>
+                              <p className="text-sm text-gray-600 mt-1">
+                                📅 {e.dateLabel}
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                📍 {e.place}
+                              </p>
+                              {e.fee && (
+                                <p className="text-xs text-gray-500 mt-1">
+                                  요금: {e.fee}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 whitespace-nowrap">
+                                {e.category}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleFavorite(e)}
+                                className="text-xl leading-none select-none"
+                                title={
+                                  isFav
+                                    ? "즐겨찾기 해제"
+                                    : "즐겨찾기에 추가"
+                                }
+                                aria-label={
+                                  isFav
+                                    ? "즐겨찾기 해제"
+                                    : "즐겨찾기에 추가"
+                                }
+                              >
+                                {isFav ? "❤️" : "🤍"}
+                              </button>
+                            </div>
                           </div>
-                        )}
-                      </li>
-                    ))}
+                          {e.homepage && (
+                            <div className="mt-2 text-right">
+                              <a
+                                className="text-xs underline underline-offset-4"
+                                href={e.homepage}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                상세보기
+                              </a>
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
 
                   {/* 페이지네이션 */}

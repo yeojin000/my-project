@@ -69,12 +69,6 @@ function normalizeRecent(rawArr) {
   return dedup.slice(0, 50);
 }
 
-/* ==== 외부 상세 페이지로 이동 ==== */
-function openHomepage(url) {
-  if (!url) return;
-  window.open(url, "_blank", "noopener,noreferrer");
-}
-
 /* ===== Kakao Maps loader ===== */
 const FALLBACK_APPKEY = "2ee5022c1da6fc178bd51ad4042556fb";
 const loadKakao = () =>
@@ -101,7 +95,6 @@ const loadKakao = () =>
     const s = document.createElement("script");
     s.id = ID;
     s.async = true;
-    // Places, Geocoder, Clusterer 모두 사용
     s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${key}&libraries=services,clusterer&autoload=false`;
     s.onload = onLoaded;
     s.onerror = reject;
@@ -168,6 +161,7 @@ export default function MyPage() {
   const clusterRef = useRef(null);
   const markersRef = useRef([]);
   const infoRef = useRef([]);
+  const markerMapRef = useRef({}); // id → { marker, info }
 
   /* 지도 초기화 */
   useEffect(() => {
@@ -188,152 +182,148 @@ export default function MyPage() {
     };
   }, []);
 
-  /* 즐겨찾기 → 좌표 채우기 (1순위: LAT/LOT, 2순위: PLACE 검색, 3순위: 구 중심) */
+  /* 즐겨찾기 → 좌표 채우기 */
   useEffect(() => {
-    const kakao = kakaoRef.current;
-    if (!kakaoReady || !kakao) return;
+    const kakao = kakaoRef.current;
+    if (!kakaoReady || !kakao) return;
 
-    if (!favs || favs.length === 0) {
-      setGeoFavs([]);
-      return;
-    }
+    if (!favs || favs.length === 0) {
+      setGeoFavs([]);
+      return;
+    }
 
-    const SEOUL_CENTER = new kakao.maps.LatLng(37.5665, 126.978);
-    const ps = new kakao.maps.services.Places();
-    const geocoder = new kakao.maps.services.Geocoder();
-    const cache = loadGeoCache();
-    let cancelled = false;
+    const SEOUL_CENTER = new kakao.maps.LatLng(37.5665, 126.978);
+    const ps = new kakao.maps.services.Places();
+    const geocoder = new kakao.maps.services.Geocoder();
+    const cache = loadGeoCache();
+    let cancelled = false;
 
-    const pickSeoul = (data, gu) => {
-      const seoul = data.filter((d) =>
-        (d.address_name || "").startsWith("서울")
-      );
-      if (gu) {
-        const inGu = seoul.filter((d) => d.address_name.includes(gu));
-        return inGu[0] || seoul[0] || null;
-      }
-      return seoul[0] || null;
-    };
+    const pickSeoul = (data, gu) => {
+      const seoul = data.filter((d) =>
+        (d.address_name || "").startsWith("서울")
+      );
+      if (gu) {
+        const inGu = seoul.filter((d) => d.address_name.includes(gu));
+        return inGu[0] || seoul[0] || null;
+      }
+      return seoul[0] || null;
+    };
 
-    const isBad = (t = "") =>
-      /온라인|비대면|미정|없음/i.test(String(t));
+    const isBad = (t = "") =>
+      /온라인|비대면|미정|없음/i.test(String(t));
 
-    const kwSearch = (keyword, gu) =>
-      new Promise((res) => {
-        if (!keyword) return res(null);
-        ps.keywordSearch(
-          keyword,
-          (data, status) => {
-            if (
-              status === kakao.maps.services.Status.OK &&
-              data.length
-            ) {
-              const best = pickSeoul(data, gu);
-              if (best)
-                return res({
-                  lat: Number(best.y),
-                  lng: Number(best.x),
-                });
-            }
-            res(null);
-          },
-          { location: SEOUL_CENTER, radius: 60000 }
-        );
-      });
+    const kwSearch = (keyword, gu) =>
+      new Promise((res) => {
+        if (!keyword) return res(null);
+        ps.keywordSearch(
+          keyword,
+          (data, status) => {
+            if (
+              status === kakao.maps.services.Status.OK &&
+              data.length
+            ) {
+              const best = pickSeoul(data, gu);
+              if (best)
+                return res({
+                  lat: Number(best.y),
+                  lng: Number(best.x),
+                });
+            }
+            res(null);
+          },
+          { location: SEOUL_CENTER, radius: 60000 }
+        );
+      });
 
-    const addrSearch = (addr) =>
-      new Promise((res) => {
-        if (!addr) return res(null);
-        geocoder.addressSearch(addr, (result, status) => {
-          if (
-            status === kakao.maps.services.Status.OK &&
-            result[0]
-          ) {
-            const r =
-              result.find((r) =>
-                r.address_name.startsWith("서울")
-              ) || result[0];
-            if (r)
-              return res({
-                lat: Number(r.y),
-                lng: Number(r.x),
-              });
-          }
-          res(null);
-        });
-      });
+    const addrSearch = (addr) =>
+      new Promise((res) => {
+        if (!addr) return res(null);
+        geocoder.addressSearch(addr, (result, status) => {
+          if (
+            status === kakao.maps.services.Status.OK &&
+            result[0]
+          ) {
+            const r =
+              result.find((r) =>
+                r.address_name.startsWith("서울")
+              ) || result[0];
+            if (r)
+              return res({
+                lat: Number(r.y),
+                lng: Number(r.x),
+              });
+          }
+          res(null);
+        });
+      });
 
-    (async () => {
-      const out = [];
-      for (const f of favs) {
-        // 1) LAT / LOT 있으면 그대로 사용
-        if (
-          typeof f.lat === "number" &&
-          typeof f.lng === "number" &&
-          Number.isFinite(f.lat) &&
-          Number.isFinite(f.lng)
-        ) {
-          out.push(f);
-          continue;
-        }
+    (async () => {
+      const out = [];
+      for (const f of favs) {
+        // 1) lat/lng 이미 있으면 그대로 사용
+        if (
+          typeof f.lat === "number" &&
+          typeof f.lng === "number" &&
+          Number.isFinite(f.lat) &&
+          Number.isFinite(f.lng)
+        ) {
+          out.push(f);
+          continue;
+        }
 
-        // 2) 캐시 확인 (PLACE + TITLE 기준)
-        const cacheKey = `${f.place || ""}|${f.title || ""}`;
-        if (cache[cacheKey]) {
-          out.push({ ...f, ...cache[cacheKey] });
-          continue;
-        }
+        // 2) 캐시 확인
+        const cacheKey = `${f.place || ""}|${f.title || ""}`;
+        if (cache[cacheKey]) {
+          out.push({ ...f, ...cache[cacheKey] });
+          continue;
+        }
 
-        let gu = f.gu;
-        if (!gu && f.place) {
-          const m = f.place.match(GU_REGEX);
-          if (m) gu = m[1];
-        }
+        let gu = f.gu;
+        if (!gu && f.place) {
+          const m = f.place.match(GU_REGEX);
+          if (m) gu = m[1];
+        }
 
-        let coords = null;
-        
-        // 3) PLACE 로 먼저 검색 (정확한 장소명 검색)
-        if (f.place && !isBad(f.place)) {
-          // 장소명과 구 이름을 결합하여 검색어의 정확도를 높입니다.
-          const searchKeyword = gu ? `${f.place} ${gu}` : f.place; 
-          coords = await kwSearch(searchKeyword, gu);
-          
-          // 그래도 없으면 장소명 자체를 주소로 간주하여 주소 검색을 시도합니다.
-          if (!coords) coords = await addrSearch(f.place);
-        }
+        let coords = null;
 
-        // 4) 그래도 없으면 제목으로 검색 (제목 검색)
-        if (!coords && f.title) {
-          // 제목과 구 이름을 결합하여 검색어의 정확도를 높입니다.
-          const searchKeyword = gu ? `${f.title} ${gu}` : f.title;
-          coords = await kwSearch(searchKeyword, gu);
-        }
+        // 3) PLACE 우선 검색
+        if (f.place && !isBad(f.place)) {
+          const searchKeyword = gu ? `${f.place} ${gu}` : f.place;
+          coords = await kwSearch(searchKeyword, gu);
+          if (!coords) coords = await addrSearch(f.place);
+        }
 
-        // 5) 마지막 fallback: 구 중심 → 서울시청
-        if (!coords && gu && GU_CENTER[gu]) {
-          const [lat, lng] = GU_CENTER[gu];
-          coords = { lat, lng };
-        }
-        if (!coords) {
-          coords = { lat: 37.5665, lng: 126.978 };
-        }
+        // 4) 그래도 없으면 제목으로 검색
+        if (!coords && f.title) {
+          const searchKeyword = gu ? `${f.title} ${gu}` : f.title;
+          coords = await kwSearch(searchKeyword, gu);
+        }
 
-        cache[cacheKey] = coords;
-        out.push({ ...f, ...coords });
+        // 5) 마지막 fallback: 구 중심 → 서울시청
+        if (!coords && gu && GU_CENTER[gu]) {
+          const [lat, lng] = GU_CENTER[gu];
+          coords = { lat, lng };
+        }
+        if (!coords) {
+          coords = { lat: 37.5665, lng: 126.978 };
+        }
 
-        await new Promise((r) => setTimeout(r, 25));
-        if (cancelled) return;
-      }
-      saveGeoCache(cache);
-      if (!cancelled) setGeoFavs(out);
-    })();
+        cache[cacheKey] = coords;
+        out.push({ ...f, ...coords });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [favs, kakaoReady]);
+        await new Promise((r) => setTimeout(r, 25));
+        if (cancelled) return;
+      }
+      saveGeoCache(cache);
+      if (!cancelled) setGeoFavs(out);
+    })();
 
-  /* 마커 + 클러스터 + 툴팁 */
+    return () => {
+      cancelled = true;
+    };
+  }, [favs, kakaoReady]);
+
+  /* 마커 + 클러스터 + 팝업(레이어) */
   useEffect(() => {
     const kakao = kakaoRef.current;
     const map = mapRef.current;
@@ -344,6 +334,7 @@ export default function MyPage() {
     infoRef.current.forEach((i) => i.close());
     markersRef.current = [];
     infoRef.current = [];
+    markerMapRef.current = {};
     if (clusterRef.current) {
       clusterRef.current.clear();
       clusterRef.current = null;
@@ -358,7 +349,7 @@ export default function MyPage() {
     const infos = [];
     const bounds = new kakao.maps.LatLngBounds();
 
-    list.forEach((f) => {
+    list.forEach((f, idx) => {
       const pos = new kakao.maps.LatLng(f.lat, f.lng);
       bounds.extend(pos);
 
@@ -367,13 +358,8 @@ export default function MyPage() {
         title: f.title,
       });
 
-      kakao.maps.event.addListener(marker, "click", () => {
-        if (f.homepage) {
-          addRecent(f);
-          openHomepage(f.homepage);
-        }
-      });
-
+      // 팝업 HTML: href에 실제 행사 페이지 URL 직접 넣기
+      const linkId = `sn-iw-${idx}`;
       const iwHtml = `
         <div style="padding:8px 10px; font-size:12px; max-width:220px;">
           <div style="font-weight:600; margin-bottom:4px;">${f.title}</div>
@@ -381,15 +367,40 @@ export default function MyPage() {
           <div style="color:#888; margin-top:2px;">${f.date || ""} · ${
         f.category || ""
       }</div>
+          ${
+            f.homepage
+              ? `<div style="margin-top:6px; text-align:right;">
+                   <a href="${f.homepage}" id="${linkId}" target="_blank" rel="noopener noreferrer"
+                      style="font-size:11px; color:#2563eb; text-decoration:underline;">
+                     상세보기
+                   </a>
+                 </div>`
+              : ""
+          }
         </div>`;
+
       const iw = new kakao.maps.InfoWindow({ content: iwHtml });
-      kakao.maps.event.addListener(marker, "mouseover", () => {
-        infos.forEach((i) => i.close());
-        iw.open(map, marker);
+
+      // 팝업 내부 링크에 addRecent만 붙이고, 기본 링크 동작은 그대로 두기
+      kakao.maps.event.addListener(iw, "domready", () => {
+        const el = document.getElementById(linkId);
+        if (el) {
+          el.onclick = (e) => {
+            // 기본 이동은 막지 않고, 최근 목록만 남겨준다.
+            addRecent(f);
+          };
+        }
       });
-      kakao.maps.event.addListener(marker, "mouseout", () =>
-        iw.close()
-      );
+
+      // 공통: 이 마커의 팝업을 열기 (다른 팝업은 닫고, 열린 상태 유지)
+      const openInfo = () => {
+        infoRef.current.forEach((info) => info.close());
+        iw.open(map, marker);
+      };
+
+      // 마커에 마우스를 올리거나 클릭하면 팝업만 표시
+      kakao.maps.event.addListener(marker, "mouseover", openInfo);
+      kakao.maps.event.addListener(marker, "click", openInfo);
 
       markers.push(marker);
       infos.push(iw);
@@ -397,6 +408,15 @@ export default function MyPage() {
 
     markersRef.current = markers;
     infoRef.current = infos;
+
+    // id → { marker, info } 매핑 (리스트 클릭 시 사용)
+    markerMapRef.current = {};
+    list.forEach((f, i) => {
+      markerMapRef.current[f.id] = {
+        marker: markers[i],
+        info: infos[i],
+      };
+    });
 
     const clusterer = new kakao.maps.MarkerClusterer({
       map,
@@ -442,6 +462,21 @@ export default function MyPage() {
   const refreshRecent = () =>
     setRecent(normalizeRecent(loadLS(LS_RECENT, [])));
 
+  /* 리스트 클릭 → 지도에서 위치 가운데 + 팝업 표시 */
+  const focusOnMap = (fav) => {
+    const kakao = kakaoRef.current;
+    const map = mapRef.current;
+    if (!kakao || !map) return;
+    const entry = markerMapRef.current[fav.id];
+    if (!entry) return;
+    const { marker, info } = entry;
+    const pos = marker.getPosition();
+
+    map.panTo(pos);
+    infoRef.current.forEach((iw) => iw.close());
+    info.open(map, marker);
+  };
+
   return (
     <div className="min-h-screen bg-white px-6 py-8 max-w-7xl mx-auto">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -478,11 +513,7 @@ export default function MyPage() {
             <div className="border rounded p-3 h-[420px] overflow-auto">
               <ul className="space-y-2">
                 {recent.map((it) => (
-                  <li
-                    key={it.id}
-                    className="flex items-center gap-2"
-                  >
-                    {/* 최근에서도 즐겨찾기 토글 가능 */}
+                  <li key={it.id} className="flex items-center gap-2">
                     <button
                       onClick={() =>
                         toggleFav({
@@ -570,7 +601,7 @@ export default function MyPage() {
             )}
           </div>
 
-          {/* 즐겨찾기 간단 리스트 */}
+          {/* 즐겨찾기 리스트 → 지도 포커스 */}
           <ul className="mt-3 text-sm text-gray-700 space-y-1">
             {favs.map((f) => (
               <li
@@ -586,33 +617,15 @@ export default function MyPage() {
                   ❤️
                 </button>
 
-                {f.homepage ? (
-                  <a
-                    href={f.homepage}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={() =>
-                      addRecent({
-                        ...f,
-                        lat: f.lat,
-                        lng: f.lng,
-                      })
-                    }
-                    className="truncate text-left hover:underline"
-                  >
-                    <b>{f.title}</b> ·{" "}
-                    {f.date || "일정 미정"} ·{" "}
-                    {f.place || "장소 미정"} (
-                    {f.category || ""})
-                  </a>
-                ) : (
-                  <span className="truncate text-gray-500">
-                    <b>{f.title}</b> ·{" "}
-                    {f.date || "일정 미정"} ·{" "}
-                    {f.place || "장소 미정"} (
-                    {f.category || ""}) — 링크 없음
-                  </span>
-                )}
+                <button
+                  type="button"
+                  onClick={() => focusOnMap(f)}
+                  className="flex-1 truncate text-left hover:underline"
+                  title="지도에서 위치 보기"
+                >
+                  <b>{f.title}</b> · {f.date || "일정 미정"} ·{" "}
+                  {f.place || "장소 미정"} ({f.category || ""})
+                </button>
               </li>
             ))}
             {favs.length === 0 && (
