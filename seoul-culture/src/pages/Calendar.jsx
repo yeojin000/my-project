@@ -517,8 +517,7 @@ export default function CalendarPage() {
                     : allDayEvents.filter((e) => e.category === category);
 
                 const isToday = key === todayKey;
-                const isPast = key < todayKey; // 과거 날짜도 조회 가능하지만 스타일만 다르게
-                const isActive = activeDay === key;
+                const isOtherMonth = !inMonth; // ★ 전달/다음 달만 음영 처리
 
                 return (
                   <button
@@ -526,12 +525,10 @@ export default function CalendarPage() {
                     onClick={() => setActiveDay(key)}
                     className={[
                       "aspect-square rounded-md border p-1 text-left cursor-pointer",
-                      !inMonth
+                      isOtherMonth
                         ? "bg-gray-50 text-gray-300"
-                        : isPast
-                        ? "bg-gray-50 text-gray-400"
                         : "bg-white hover:bg-gray-50",
-                      isActive ? "ring-2 ring-black" : "",
+                      activeDay === key ? "ring-2 ring-black" : "",
                     ].join(" ")}
                     title={
                       dayData.totalCount
@@ -550,7 +547,7 @@ export default function CalendarPage() {
                             className={[
                               "inline-block w-1.5 h-1.5 rounded-full",
                               CAT_COLOR[e.category] || "bg-gray-400",
-                              isPast ? "opacity-50" : "",
+                              isOtherMonth ? "opacity-50" : "",
                             ].join(" ")}
                           />
                         ))}
@@ -645,14 +642,10 @@ export default function CalendarPage() {
                                 onClick={() => handleToggleFavorite(e)}
                                 className="text-xl leading-none select-none"
                                 title={
-                                  isFav
-                                    ? "즐겨찾기 해제"
-                                    : "즐겨찾기에 추가"
+                                  isFav ? "즐겨찾기 해제" : "즐겨찾기에 추가"
                                 }
                                 aria-label={
-                                  isFav
-                                    ? "즐겨찾기 해제"
-                                    : "즐겨찾기에 추가"
+                                  isFav ? "즐겨찾기 해제" : "즐겨찾기에 추가"
                                 }
                               >
                                 {isFav ? "❤️" : "🤍"}

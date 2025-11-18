@@ -63,7 +63,7 @@ const loadKakao = () =>
   new Promise((resolve, reject) => {
     if (window.kakao && window.kakao.maps) { resolve(window.kakao); return; }
 
-    const key = KAKAO_KEY; // 필수: .env의 REACT_APP_KAKAO_MAP_KEY
+    const key = KAKAO_KEY;
     if (!key) return reject(new Error("REACT_APP_KAKAO_MAP_KEY가 설정되지 않았습니다 (.env 확인)."));
 
     const ID = "kakao-maps-sdk";
@@ -89,9 +89,7 @@ const loadKakao = () =>
     document.head.appendChild(s);
   });
 
-/* === 서울시 문화행사 OpenAPI(JSON) ===
-   프록시를 쓰지 않고 .env 키로 직접 호출
-*/
+/* === 서울시 문화행사 OpenAPI(JSON) === */
 const PAGE_SIZE = 200;
 const SEOUL_API_BASE = SEOUL_KEY
   ? `http://openapi.seoul.go.kr:8088/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo`
@@ -178,8 +176,7 @@ const inRange = (ev, startISO, endISO) => {
   return leftOK && rightOK;
 };
 
-// 🌟 서울시 대략적인 경계 (지오코딩 결과 필터링용)
-// 위도: 37.4 ~ 37.7, 경도: 126.7 ~ 127.2
+// 서울시 대략적인 경계 (지오코딩 결과 필터링용)
 const isWithinSeoulBoundary = (lat, lng) => {
   return lat >= 37.4 && lat <= 37.7 && lng >= 126.7 && lng <= 127.2;
 };
@@ -189,7 +186,7 @@ export default function MapPage() {
   const [category, setCategory] = useState("전체");
   const [area, setArea] = useState("전체");
   const [quick, setQuick] = useState("오늘");
-  const [startDate, setStartDate] = useState(ymd(new Date())); //기본 : 오늘
+  const [startDate, setStartDate] = useState(ymd(new Date())); // 기본: 오늘
   const [endDate, setEndDate] = useState("");
 
   /* 데이터/지도 상태 */
@@ -206,123 +203,116 @@ export default function MapPage() {
   const kakaoRef = useRef(null);
 
   /* Kakao + 데이터 로드 */
- useEffect(() => {
-  let disposed = false;
+  useEffect(() => {
+    let disposed = false;
 
-  (async () => {
-    try {
-      const kakao = await loadKakao();
-      if (disposed) return;
-      kakaoRef.current = kakao;
+    (async () => {
+      try {
+        const kakao = await loadKakao();
+        if (disposed) return;
+        kakaoRef.current = kakao;
 
-      const center = new kakao.maps.LatLng(37.5665, 126.9780);
-      if (mapEl.current) {
-        const map = new kakao.maps.Map(mapEl.current, { center, level: 7 });
-        mapRef.current = map;
-      }
-
-      setLoading(true);
-      setErr(null);
-
-      if (!SEOUL_API_BASE) {
-        throw new Error("REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인).");
-      }
-
-      // 사용자가 지정한 시작일 (없으면 오늘 기준)
-      const userStartISO = startDate || ymd(new Date());
-      const userStart = new Date(userStartISO + "T00:00:00");
-
-      let pageStart = 1;
-      const allRows = [];
-      let stop = false;
-
-      while (!stop) {
-        const pageEnd = pageStart + PAGE_SIZE - 1;
-        const url = `${SEOUL_API_BASE}/${pageStart}/${pageEnd}/`;
-
-        const res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        const json = await res.json();
-        const rows = json?.culturalEventInfo?.row || [];
-
-        // 더 이상 데이터가 없으면 종료
-        if (rows.length === 0) break;
-
-        allRows.push(...rows);
-
-        // *** 중요: 가장 오래된(리스트의 마지막) 행사 종료일 체크 ***
-        const last = rows[rows.length - 1];
-        const endStr =
-          last.END_DATE ||
-          last.ENDDATE ||
-          last.END ||
-          last.STRTDATE ||
-          last.DATE;
-        const lastEnd = parseToDate(endStr);
-
-        if (lastEnd && lastEnd < userStart) {
-          // 사용자가 지정한 시작일보다 과거인 행사가 등장 -> 더 이상 볼 필요 없음
-          stop = true;
-        } else {
-          // 다음 페이지로 이동
-          pageStart += PAGE_SIZE;
+        const center = new kakao.maps.LatLng(37.5665, 126.9780);
+        if (mapEl.current) {
+          const map = new kakao.maps.Map(mapEl.current, { center, level: 7 });
+          mapRef.current = map;
         }
 
-        if (disposed) return;
+        setLoading(true);
+        setErr(null);
+
+        if (!SEOUL_API_BASE) {
+          throw new Error("REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인).");
+        }
+
+        const userStartISO = startDate || ymd(new Date());
+        const userStart = new Date(userStartISO + "T00:00:00");
+
+        let pageStart = 1;
+        const allRows = [];
+        let stop = false;
+
+        while (!stop) {
+          const pageEnd = pageStart + PAGE_SIZE - 1;
+          const url = `${SEOUL_API_BASE}/${pageStart}/${pageEnd}/`;
+
+          const res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+          const json = await res.json();
+          const rows = json?.culturalEventInfo?.row || [];
+
+          if (rows.length === 0) break;
+
+          allRows.push(...rows);
+
+          const last = rows[rows.length - 1];
+          const endStr =
+            last.END_DATE ||
+            last.ENDDATE ||
+            last.END ||
+            last.STRTDATE ||
+            last.DATE;
+          const lastEnd = parseToDate(endStr);
+
+          if (lastEnd && lastEnd < userStart) {
+            stop = true;
+          } else {
+            pageStart += PAGE_SIZE;
+          }
+
+          if (disposed) return;
+        }
+
+        const items = normalizeEvents({
+          culturalEventInfo: { row: allRows },
+        });
+
+        if (!disposed) setEvents(items);
+      } catch (e) {
+        if (!disposed) setErr(e);
+      } finally {
+        if (!disposed) setLoading(false);
       }
+    })();
 
-      // 기존 normalizeEvents는 json 전체를 받도록 되어 있으니,
-      // 동일 형태의 객체를 만들어서 재사용
-      const items = normalizeEvents({
-        culturalEventInfo: { row: allRows },
-      });
+    return () => {
+      disposed = true;
+    };
+  }, [startDate]);
 
-      if (!disposed) setEvents(items);
-    } catch (e) {
-      if (!disposed) setErr(e);
-    } finally {
-      if (!disposed) setLoading(false);
+  /* 빠른 기간 선택 */
+  useEffect(() => {
+    if (!quick) return;
+
+    const today = new Date();
+
+    if (quick === "오늘") {
+      const k = ymd(today);
+      setStartDate(k);
+      setEndDate(k);
+      return;
     }
-  })();
 
-  return () => {
-    disposed = true;
-  };
-}, [startDate]); // 🔸 startDate가 바뀔 때마다 필요한 범위만 다시 조회
+    if (quick === "이번 주") {
+      const day = today.getDay(); // 0:일
+      const diffToMon = day === 0 ? -6 : 1 - day;
+      const mon = new Date(today); mon.setDate(today.getDate() + diffToMon);
+      const sun = new Date(mon);   sun.setDate(mon.getDate() + 6);
+      setStartDate(ymd(mon));
+      setEndDate(ymd(sun));
+      return;
+    }
 
-
- useEffect(() => {
-  if (!quick) return;  // 빠른 기간 선택이 없는(커스텀) 상태면 아무것도 안 함
-
-  const today = new Date();
-
-  if (quick === "오늘") {
-    const k = ymd(today);
-    setStartDate(k);
-    setEndDate(k);
-    return;
-  }
-
-  if (quick === "이번 주") {
-    const day = today.getDay(); // 0:일
-    const diffToMon = day === 0 ? -6 : 1 - day;
-    const mon = new Date(today); mon.setDate(today.getDate() + diffToMon);
-    const sun = new Date(mon);   sun.setDate(mon.getDate() + 6);
-    setStartDate(ymd(mon));
-    setEndDate(ymd(sun));
-    return;
-  }
-
-  if (quick === "이번 달") {
-    const y = today.getFullYear(), m = today.getMonth();
-    const s = new Date(y, m, 1);
-    const e = new Date(y, m + 1, 0);
-    setStartDate(ymd(s));
-    setEndDate(ymd(e));
-    return;
-  }
-}, [quick]);
+    if (quick === "이번 달") {
+      const y = today.getFullYear(), m = today.getMonth();
+      const s = new Date(y, m, 1);
+      const e = new Date(y, m + 1, 0);
+      setStartDate(ymd(s));
+      setEndDate(ymd(e));
+      return;
+    }
+  }, [quick]);
 
   /* 지역 변경 → 지도 중심 이동 */
   useEffect(() => {
@@ -357,7 +347,7 @@ export default function MapPage() {
     });
   }, [events, category, area, startDate, endDate]);
 
-  /* 장소 → 좌표(지오코딩) + 캐시 + 서울/구 검증 강화 */
+  /* 장소 → 좌표(지오코딩) + 캐시 */
   const [geoReadyEvents, setGeoReadyEvents] = useState([]);
   useEffect(() => {
     const kakao = kakaoRef.current;
@@ -433,7 +423,7 @@ export default function MapPage() {
           const [lat, lng] = GU_CENTER[ev.gu];
           coords = { lat, lng };
         }
-        
+
         // 서울 경계 검증
         if (coords) {
           if (!isWithinSeoulBoundary(coords.lat, coords.lng)) {
@@ -463,12 +453,13 @@ export default function MapPage() {
     return () => { cancelled = true; };
   }, [filtered]);
 
-  /* 마커/클러스터 갱신 */
+  /* 마커/클러스터 갱신 + 지도 클릭 시 팝업 닫기 */
   useEffect(() => {
     const kakao = kakaoRef.current;
     const map = mapRef.current;
     if (!kakao || !map) return;
 
+    // 기존 마커/인포윈도우/클러스터 제거
     markersRef.current.forEach((m) => m.setMap(null));
     infoRef.current.forEach((i) => i.close());
     markersRef.current = [];
@@ -494,7 +485,10 @@ export default function MapPage() {
           <div style="color:#888; margin-top:2px;">${ev.dateLabel}</div>
         </div>
       `;
-      const iw = new kakao.maps.InfoWindow({ content: iwHtml });
+      const iw = new kakao.maps.InfoWindow({
+        content: iwHtml,
+        removable: true, // ★ X 버튼 표시
+      });
 
       kakao.maps.event.addListener(marker, "click", () => {
         infos.forEach((i) => i.close());
@@ -514,9 +508,15 @@ export default function MapPage() {
       markers,
       averageCenter: true,
       minLevel: 6,
-      disableClickZoom: false
+      disableClickZoom: false,
     });
     clusterRef.current = clusterer;
+
+    // ★ 지도 다른 부분 클릭 시 모든 레이어 팝업 닫기
+    const handleMapClick = () => {
+      infos.forEach((i) => i.close());
+    };
+    kakao.maps.event.addListener(map, "click", handleMapClick);
 
     if (area === "전체" && markers.length > 0) {
       map.setBounds(bounds, 40, 40, 40, 40);
@@ -524,6 +524,10 @@ export default function MapPage() {
     if (selected && !geoReadyEvents.some((e) => e.id === selected.id)) {
       setSelected(null);
     }
+
+    return () => {
+      kakao.maps.event.removeListener(map, "click", handleMapClick);
+    };
   }, [geoReadyEvents, area, selected]);
 
   /* 즐겨찾기 토글 (페이지 이동 없음) */

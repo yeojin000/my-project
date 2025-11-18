@@ -379,14 +379,17 @@ export default function MyPage() {
           }
         </div>`;
 
-      const iw = new kakao.maps.InfoWindow({ content: iwHtml });
+      // ★ X 버튼 있는 레이어 팝업
+      const iw = new kakao.maps.InfoWindow({
+        content: iwHtml,
+        removable: true, // 우측 상단에 "X" 버튼 표시
+      });
 
-      // 팝업 내부 링크에 addRecent만 붙이고, 기본 링크 동작은 그대로 두기
+      // 팝업 내부 링크에 addRecent만 붙이고, 기본 링크 이동은 그대로 둠
       kakao.maps.event.addListener(iw, "domready", () => {
         const el = document.getElementById(linkId);
         if (el) {
-          el.onclick = (e) => {
-            // 기본 이동은 막지 않고, 최근 목록만 남겨준다.
+          el.onclick = () => {
             addRecent(f);
           };
         }
@@ -398,7 +401,6 @@ export default function MyPage() {
         iw.open(map, marker);
       };
 
-      // 마커에 마우스를 올리거나 클릭하면 팝업만 표시
       kakao.maps.event.addListener(marker, "mouseover", openInfo);
       kakao.maps.event.addListener(marker, "click", openInfo);
 
@@ -428,6 +430,17 @@ export default function MyPage() {
     clusterRef.current = clusterer;
 
     map.setBounds(bounds, 40, 40, 40, 40);
+
+    // ★ 지도 빈 곳 클릭하면 모든 레이어 팝업 닫기
+    const handleMapClick = () => {
+      infos.forEach((i) => i.close());
+    };
+    kakao.maps.event.addListener(map, "click", handleMapClick);
+
+    // cleanup: 지도 클릭 이벤트 제거
+    return () => {
+      kakao.maps.event.removeListener(map, "click", handleMapClick);
+    };
   }, [geoFavs]);
 
   // 스토리지/커스텀 이벤트 반영
@@ -448,7 +461,7 @@ export default function MyPage() {
   }, []);
 
   /* 즐겨찾기 토글 */
-  const toggleFav = (item) => {
+  const toggleFavLS = (item) => {
     const list = loadLS(LS_FAV, []);
     const exists = list.some((x) => x.id === item.id);
     const next = exists
@@ -516,7 +529,7 @@ export default function MyPage() {
                   <li key={it.id} className="flex items-center gap-2">
                     <button
                       onClick={() =>
-                        toggleFav({
+                        toggleFavLS({
                           id: it.id,
                           title: it.title,
                           date: it.date,
@@ -609,7 +622,7 @@ export default function MyPage() {
                 className="flex items-center gap-2 px-2 py-1 rounded"
               >
                 <button
-                  onClick={() => toggleFav(f)}
+                  onClick={() => toggleFavLS(f)}
                   title="즐겨찾기 해제"
                   aria-label="즐겨찾기 해제"
                   className="leading-none"

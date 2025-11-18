@@ -223,19 +223,35 @@ function useSeoulEventsInfinite() {
 export default function BrowseEvents() {
   const [sp, setSp] = useSearchParams();
 
-  // URL 쿼리 동기화
+  // --- URL 쿼리에서 초기값 추출 ---
   const categoryParam = sp.get("category");
-  const initialCategory =
+  const qParam = sp.get("q") || "";
+
+  const [category, setCategory] = useState(
     categoryParam && CATEGORIES.includes(categoryParam)
       ? categoryParam
-      : "전체";
-  const initialQuery = sp.get("q") || "";
+      : "전체"
+  );
+  const [input, setInput] = useState(qParam); // 입력창 값
+  const [query, setQuery] = useState(qParam); // 실제 검색에 쓰는 값
 
-  const [category, setCategory] = useState(initialCategory);
-  const [input, setInput] = useState(initialQuery);
-  const [query, setQuery] = useState(initialQuery);
+  // ✅ URL(searchParams)이 바뀔 때마다 상태 재동기화
+  // (HOME/헤더 검색에서 /browse?q=... 로 들어오는 경우 포함)
+  useEffect(() => {
+    const urlCategory = sp.get("category");
+    const urlQ = sp.get("q") || "";
 
-  // 검색 입력 디바운스
+    const nextCategory =
+      urlCategory && CATEGORIES.includes(urlCategory)
+        ? urlCategory
+        : "전체";
+
+    setCategory(nextCategory);
+    setInput(urlQ);
+    setQuery(urlQ);
+  }, [sp]);
+
+  // 검색 입력 디바운스 → query로 반영
   useEffect(() => {
     const t = setTimeout(() => setQuery(input), 300);
     return () => clearTimeout(t);
@@ -260,8 +276,6 @@ export default function BrowseEvents() {
     loading,
     error,
     totalCount,
-    totalPages,
-    currentPage,
     hasMore,
     loadMore,
   } = useSeoulEventsInfinite();
@@ -323,6 +337,9 @@ export default function BrowseEvents() {
     saveFavs(next);
     setFavSet(new Set(next.map((x) => x.id)));
   };
+
+  const isFiltering =
+    category !== "전체" || (deferredQuery || "").trim().length > 0;
 
   return (
     <div className="min-h-screen bg-white">
@@ -412,9 +429,38 @@ export default function BrowseEvents() {
 
                 <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-sm">
                   <div className="text-gray-600">
-                    {totalCount
-                      ? `총 ${totalCount}건 중 현재 ${filtered.length}건 표시 (데이터 ${allEvents.length}건 로딩됨, ~${currentPage}/${totalPages}페이지)`
-                      : `현재 ${filtered.length}건 표시 중`}
+                    {isFiltering ? (
+                      <>
+                        검색 결과{" "}
+                        <strong className="font-semibold">
+                          {filtered.length}
+                        </strong>
+                        건
+                        <span className="text-xs text-gray-500 ml-1">
+                          (현재 로딩된 데이터 {allEvents.length}건 기준)
+                        </span>
+                      </>
+                    ) : totalCount ? (
+                      <>
+                        총{" "}
+                        <strong className="font-semibold">
+                          {totalCount}
+                        </strong>
+                        건 중{" "}
+                        <span className="font-semibold">
+                          {allEvents.length}
+                        </span>
+                        건을 불러왔습니다.
+                      </>
+                    ) : (
+                      <>
+                        현재{" "}
+                        <span className="font-semibold">
+                          {allEvents.length}
+                        </span>
+                        건을 불러왔습니다.
+                      </>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 justify-end">
                     {hasMore ? (
