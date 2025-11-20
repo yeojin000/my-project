@@ -92,7 +92,7 @@ const loadKakao = () =>
 /* === 서울시 문화행사 OpenAPI(JSON) === */
 const PAGE_SIZE = 200;
 const SEOUL_API_BASE = SEOUL_KEY
-  ? `http://openapi.seoul.go.kr:8088/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo`
+  ? `https://openapi.seoul.go.kr/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo`
   : null;
 
 /* === 상위 카테고리 매핑 === */
