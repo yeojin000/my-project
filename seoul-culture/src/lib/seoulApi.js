@@ -12,7 +12,7 @@ const DEFAULT_PAGE = 200;
 
 /** 내부 공통 URL 빌더 */
 function buildBaseUrl({ seoulKey, useProxy }) {
-  const key = seoulKey || (process.env.NEXT_PUBLIC_SEOUL_KEYY || "").trim();
+  const key = seoulKey || (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim();
   if (!useProxy && !key) {
     throw new Error("REACT_APP_SEOUL_KEY 가 설정되지 않았습니다 (.env 확인).");
   }
