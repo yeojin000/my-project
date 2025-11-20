@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /* === 환경변수 === */
-const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
+const SEOUL_KEY = (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim();
 const KAKAO_KEY = (process.env.REACT_APP_KAKAO_MAP_KEY || "").trim();
 
 /* === 필터 옵션 === */

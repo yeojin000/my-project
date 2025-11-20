@@ -12,7 +12,7 @@ const DEFAULT_PAGE = 200;
 
 /** 내부 공통 URL 빌더 */
 function buildBaseUrl({ seoulKey, useProxy }) {
-  const key = seoulKey || (process.env.REACT_APP_SEOUL_KEY || "").trim();
+  const key = seoulKey || (process.env.NEXT_PUBLIC_SEOUL_KEYY || "").trim();
   if (!useProxy && !key) {
     throw new Error("REACT_APP_SEOUL_KEY 가 설정되지 않았습니다 (.env 확인).");
   }
@@ -44,7 +44,7 @@ function normalizeRange(startIndex = 0, endIndex = 4) {
  */
 export async function fetchSeoulAllEventsJSON({
   // direct 모드: openapi 직접 호출
-  seoulKey = (process.env.REACT_APP_SEOUL_KEY || "").trim(),
+  seoulKey = (process.env.process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
   // proxy 모드: 개발 프록시(setupProxy.js)로 키를 숨겨서 호출(ex. /api/seoul/…)
   useProxy = false,
   // 한 번에 가져올 개수 (200 추천)
@@ -103,7 +103,7 @@ export async function fetchSeoulAllEventsJSON({
  *  - 반환값: 오픈API 원본 JSON (App.jsx에서 culturalEventInfo.row 로 꺼내씀)
  */
 export async function fetchSeoulRecommendedEvents({
-  seoulKey = (process.env.REACT_APP_SEOUL_KEY || "").trim(),
+  seoulKey = (process.env.process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
   useProxy = false,
   startIndex = 0,
   endIndex = 4,
@@ -138,7 +138,7 @@ export async function fetchSeoulRecommendedEvents({
  *    * codename, guname: 필요시 필터 (기본은 전체)
  */
 export async function fetchSeoulDailyEvents({
-  seoulKey = (process.env.REACT_APP_SEOUL_KEY || "").trim(),
+  seoulKey = (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
   useProxy = false,
   date,
   startIndex = 0,
