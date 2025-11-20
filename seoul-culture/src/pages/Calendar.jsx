@@ -15,7 +15,7 @@ import React, {
 import { fetchSeoulDailyEvents } from "../lib/seoulApi.js";
 
 /* === 환경변수 === */
-const SEOUL_KEY = (process.env.NEXT_PUBLIC_REACT_APP_SEOUL_KEY || "").trim();
+const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
 
 /* === 카테고리(브라우즈와 동일 라벨) === */
 const CATEGORIES = ["전체", "공연", "전시", "교육/체험", "기타"];
