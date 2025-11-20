@@ -20,7 +20,7 @@ function buildBaseUrl({ seoulKey, useProxy }) {
     // 프록시 모드(키는 서버에서 주입): /api/seoul/...
     ? "/api/seoul"
     // 직접 호출 모드: http://openapi.seoul.go.kr:8088/{key}/json/...
-    : `https://openapi.seoul.go.kr:8088/${encodeURIComponent(key)}/json`;
+    : `https://openapi.seoul.go.kr/${encodeURIComponent(key)}/json`;
 }
 
 /** 내부 공통 START/END 보정 (멘토님이 말씀하신 0~4 를 1 기반으로 변환) */
