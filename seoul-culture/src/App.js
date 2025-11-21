@@ -32,7 +32,7 @@ import {
 } from "./lib/seoulApi";
 
 /* === .env 키 === */
-const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
+const SEOUL_KEY = (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim();
 
 /* --- 카테고리/색상 --- */
 const categories = [

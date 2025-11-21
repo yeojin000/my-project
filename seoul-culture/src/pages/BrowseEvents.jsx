@@ -10,7 +10,7 @@ import { fetchSeoulRecommendedEvents } from "../lib/seoulApi";
 import { addRecent } from "./MyPage";
 
 /* === .env 키 === */
-const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
+const SEOUL_KEY = (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim();
 
 /* === 카테고리 === */
 const CATEGORIES = ["전체", "공연", "전시", "교육/체험", "기타"];
