@@ -1,8 +1,11 @@
 // src/pages/Map.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+// ✅ 서울 API 헬퍼(프록시 사용) 추가
+import { fetchSeoulAllEventsJSON } from "../lib/seoulApi";
 
 /* === 환경변수 === */
-const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
+// ✅ 서울키는 더 이상 직접 쓰지 않음 (프록시 사용)
+// const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
 const KAKAO_KEY = (process.env.REACT_APP_KAKAO_MAP_KEY || "").trim();
 
 /* === 필터 옵션 === */
@@ -91,9 +94,7 @@ const loadKakao = () =>
 
 /* === 서울시 문화행사 OpenAPI(JSON) === */
 const PAGE_SIZE = 200;
-const SEOUL_API_BASE = SEOUL_KEY
-  ? `https://openapi.seoul.go.kr:8088/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo`
-  : null;
+// ✅ SEOUL_API_BASE/SEOUL_KEY 삭제 (프록시 + seoulApi.js 사용)
 
 /* === 상위 카테고리 매핑 === */
 function toHighLevelCategory(codename = "", themecode = "") {
@@ -202,7 +203,7 @@ export default function MapPage() {
   const clusterRef = useRef(null);
   const kakaoRef = useRef(null);
 
-  /* Kakao + 데이터 로드 */
+  /* Kakao + 서울 OpenAPI 데이터 로드 (프록시 사용) */
   useEffect(() => {
     let disposed = false;
 
@@ -221,54 +222,20 @@ export default function MapPage() {
         setLoading(true);
         setErr(null);
 
-        if (!SEOUL_API_BASE) {
-          throw new Error("REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인).");
-        }
+        // ✅ 프록시 + seoulApi.js 사용해서 전체 데이터 로드
+        const allRows = await fetchSeoulAllEventsJSON({
+          useProxy: true,
+          pageSize: PAGE_SIZE,
+          hardLimit: 5000,
+        });
 
-        const userStartISO = startDate || ymd(new Date());
-        const userStart = new Date(userStartISO + "T00:00:00");
-
-        let pageStart = 1;
-        const allRows = [];
-        let stop = false;
-
-        while (!stop) {
-          const pageEnd = pageStart + PAGE_SIZE - 1;
-          const url = `${SEOUL_API_BASE}/${pageStart}/${pageEnd}/`;
-
-          const res = await fetch(url, { cache: "no-store" });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-          const json = await res.json();
-          const rows = json?.culturalEventInfo?.row || [];
-
-          if (rows.length === 0) break;
-
-          allRows.push(...rows);
-
-          const last = rows[rows.length - 1];
-          const endStr =
-            last.END_DATE ||
-            last.ENDDATE ||
-            last.END ||
-            last.STRTDATE ||
-            last.DATE;
-          const lastEnd = parseToDate(endStr);
-
-          if (lastEnd && lastEnd < userStart) {
-            stop = true;
-          } else {
-            pageStart += PAGE_SIZE;
-          }
-
-          if (disposed) return;
-        }
+        if (disposed) return;
 
         const items = normalizeEvents({
           culturalEventInfo: { row: allRows },
         });
 
-        if (!disposed) setEvents(items);
+        setEvents(items);
       } catch (e) {
         if (!disposed) setErr(e);
       } finally {
@@ -279,7 +246,7 @@ export default function MapPage() {
     return () => {
       disposed = true;
     };
-  }, [startDate]);
+  }, []); // ✅ 한 번만 로드
 
   /* 빠른 기간 선택 */
   useEffect(() => {
@@ -487,7 +454,7 @@ export default function MapPage() {
       `;
       const iw = new kakao.maps.InfoWindow({
         content: iwHtml,
-        removable: true, // ★ X 버튼 표시
+        removable: true,
       });
 
       kakao.maps.event.addListener(marker, "click", () => {
@@ -512,7 +479,6 @@ export default function MapPage() {
     });
     clusterRef.current = clusterer;
 
-    // ★ 지도 다른 부분 클릭 시 모든 레이어 팝업 닫기
     const handleMapClick = () => {
       infos.forEach((i) => i.close());
     };

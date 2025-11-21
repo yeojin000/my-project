@@ -70,14 +70,26 @@ function normalizeRecent(rawArr) {
 }
 
 /* ===== Kakao Maps loader ===== */
-const FALLBACK_APPKEY = "2ee5022c1da6fc178bd51ad4042556fb";
+// 🔁 Map.jsx와 동일한 방식으로 환경변수 사용
+const KAKAO_KEY = (process.env.REACT_APP_KAKAO_MAP_KEY || "").trim();
+
 const loadKakao = () =>
   new Promise((resolve, reject) => {
     if (window.kakao && window.kakao.maps) {
       resolve(window.kakao);
       return;
     }
-    const key = process.env.REACT_APP_KAKAO_MAP_KEY || FALLBACK_APPKEY;
+
+    const key = KAKAO_KEY;
+    if (!key) {
+      reject(
+        new Error(
+          "REACT_APP_KAKAO_MAP_KEY가 설정되지 않았습니다 (.env/Vercel 환경변수 확인)."
+        )
+      );
+      return;
+    }
+
     const ID = "kakao-maps-sdk";
     const exist = document.getElementById(ID);
     const onLoaded = () => {
@@ -87,15 +99,19 @@ const loadKakao = () =>
         reject(e);
       }
     };
+
     if (exist) {
       exist.addEventListener("load", onLoaded, { once: true });
       exist.addEventListener("error", reject, { once: true });
       return;
     }
+
     const s = document.createElement("script");
     s.id = ID;
     s.async = true;
-    s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${key}&libraries=services,clusterer&autoload=false`;
+    s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(
+      key
+    )}&libraries=services,clusterer&autoload=false`;
     s.onload = onLoaded;
     s.onerror = reject;
     document.head.appendChild(s);
