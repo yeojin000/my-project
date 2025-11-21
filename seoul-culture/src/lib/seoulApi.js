@@ -1,20 +1,14 @@
 // src/lib/seoulApi.js
-// 서울시 문화행사 오픈 API 헬퍼 모음
-// - 전체 데이터 페이징 수집: fetchSeoulAllEventsJSON
-// - HOME "추천 행사": fetchSeoulRecommendedEvents
-// - HOME "행사 캘린더"(일별 조회): fetchSeoulDailyEvents
-//
-// 공통 규칙
-// - .env 의 REACT_APP_SEOUL_KEY 사용(직접 호출) 또는 프록시(/api/seoul) 둘 다 지원
-// - 멘토님 피드백에 맞게 START_INDEX=0, END_INDEX=4 로 넘기면 내부에서 1 기반으로 보정
 
 const DEFAULT_PAGE = 200;
 
 /** 내부 공통 URL 빌더 */
 function buildBaseUrl({ seoulKey, useProxy }) {
+  // [수정 3] NEXT_PUBLIC_SEOUL_KEYY -> NEXT_PUBLIC_SEOUL_KEY 오타 수정
   const key = seoulKey || (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim();
   if (!useProxy && !key) {
-    throw new Error("REACT_APP_SEOUL_KEY 가 설정되지 않았습니다 (.env 확인).");
+    // [수정 2] 에러 메시지 업데이트
+    throw new Error("NEXT_PUBLIC_SEOUL_KEY 가 설정되지 않았습니다 (.env/Vercel 확인).");
   }
   return useProxy
     // 프록시 모드(키는 서버에서 주입): /api/seoul/...
@@ -39,12 +33,13 @@ function normalizeRange(startIndex = 0, endIndex = 4) {
 
 /**
  * 1) 전체 데이터를 페이지 단위로 모두 불러오는 헬퍼
- *  - JSON 포맷 기준
- *  - 페이징 돌면서 row만 모아서 배열로 리턴
+ * - JSON 포맷 기준
+ * - 페이징 돌면서 row만 모아서 배열로 리턴
  */
 export async function fetchSeoulAllEventsJSON({
   // direct 모드: openapi 직접 호출
-  seoulKey = (process.env.process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
+  // [수정 1] process.env 중복 제거
+  seoulKey = (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
   // proxy 모드: 개발 프록시(setupProxy.js)로 키를 숨겨서 호출(ex. /api/seoul/…)
   useProxy = false,
   // 한 번에 가져올 개수 (200 추천)
@@ -62,7 +57,9 @@ export async function fetchSeoulAllEventsJSON({
 
   let start = 1;
   let round = 0;
-
+  
+  // (이하 코드 생략 없음)
+  
   while (allRows.length < hardLimit) {
     const end = start + pageSize - 1;
 
@@ -98,12 +95,13 @@ export async function fetchSeoulAllEventsJSON({
 
 /**
  * 2) HOME "추천 행사"용
- *  - 멘토님 피드백: 추천 행사는 전체 데이터랑 분리해서 별도 API 호출
- *  - START_INDEX=0, END_INDEX=4 (또는 보여주고 싶은 만큼) 로 조회
- *  - 반환값: 오픈API 원본 JSON (App.jsx에서 culturalEventInfo.row 로 꺼내씀)
+ * - 멘토님 피드백: 추천 행사는 전체 데이터랑 분리해서 별도 API 호출
+ * - START_INDEX=0, END_INDEX=4 (또는 보여주고 싶은 만큼) 로 조회
+ * - 반환값: 오픈API 원본 JSON (App.jsx에서 culturalEventInfo.row 로 꺼내씀)
  */
 export async function fetchSeoulRecommendedEvents({
-  seoulKey = (process.env.process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
+  // [수정 1] process.env 중복 제거
+  seoulKey = (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
   useProxy = false,
   startIndex = 0,
   endIndex = 4,
@@ -122,20 +120,20 @@ export async function fetchSeoulRecommendedEvents({
 
 /**
  * 3) HOME "행사 캘린더"용: 특정 날짜 하루 단위 조회
- *  - 이 API는 DATE를 쿼리스트링(?DATE=...)이 아니라
- *    경로 파라미터로 넘겨야 함:
+ * - 이 API는 DATE를 쿼리스트링(?DATE=...)이 아니라
+ * 경로 파라미터로 넘겨야 함:
  *
- *    /culturalEventInfo/{start}/{end}/{CODENAME}/{GUNAME}/{DATE}/
+ * /culturalEventInfo/{start}/{end}/{CODENAME}/{GUNAME}/{DATE}/
  *
- *  - CODENAME, GUNAME 필터를 안 쓰는 경우 " " (공백)을 넣으라고 되어 있어
- *    실제 호출은 예를 들어:
+ * - CODENAME, GUNAME 필터를 안 쓰는 경우 " " (공백)을 넣으라고 되어 있어
+ * 실제 호출은 예를 들어:
  *
- *    .../culturalEventInfo/1/4/%20/%20/2025-11-13/
+ * .../culturalEventInfo/1/4/%20/%20/2025-11-13/
  *
- *  - 매개변수:
- *    * date: "YYYY-MM-DD" 형식 문자열 (필수)
- *    * startIndex, endIndex: 멘토님 기준(0~4) -> 내부에서 1 기반으로 보정
- *    * codename, guname: 필요시 필터 (기본은 전체)
+ * - 매개변수:
+ * * date: "YYYY-MM-DD" 형식 문자열 (필수)
+ * * startIndex, endIndex: 멘토님 기준(0~4) -> 내부에서 1 기반으로 보정
+ * * codename, guname: 필요시 필터 (기본은 전체)
  */
 export async function fetchSeoulDailyEvents({
   seoulKey = (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
