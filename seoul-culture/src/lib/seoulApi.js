@@ -5,23 +5,23 @@
 // - HOME "행사 캘린더"(일별 조회): fetchSeoulDailyEvents
 //
 // 공통 규칙
-// - .env 의 NEXT_PUBLIC_SEOUL_KEY 사용(직접 호출) 또는 프록시(/api/seoul) 둘 다 지원
+// - .env 의 REACT_APP_SEOUL_KEY 사용(직접 호출) 또는 프록시(/api/seoul) 둘 다 지원
 // - 멘토님 피드백에 맞게 START_INDEX=0, END_INDEX=4 로 넘기면 내부에서 1 기반으로 보정
 
 const DEFAULT_PAGE = 200;
 
 /** 내부 공통 URL 빌더 */
 function buildBaseUrl({ seoulKey, useProxy }) {
-  const key = seoulKey || (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim();
+  const key = seoulKey || (process.env.REACT_APP_SEOUL_KEY || "").trim();
   if (!useProxy && !key) {
     // 에러 메시지 업데이트
-    throw new Error("NEXT_PUBLIC_SEOUL_KEY 가 설정되지 않았습니다 (.env/Vercel 확인).");
+    throw new Error("REACT_APP_SEOUL_KEY 가 설정되지 않았습니다 (.env/Vercel 확인).");
   }
   return useProxy
     // 프록시 모드(키는 서버에서 주입): /api/seoul/...
     ? "/api/seoul"
     // [수정] 직접 호출 모드: API 형식에 맞게 `/json`을 제거하고 키까지만 반환합니다.
-    : `https://openapi.seoul.go.kr/${encodeURIComponent(key)}`;
+    : `https://openapi.seoul.go.kr:8088/${encodeURIComponent(key)}`;
 }
 
 /** 내부 공통 START/END 보정 (멘토님이 말씀하신 0~4 를 1 기반으로 변환) */
@@ -45,7 +45,7 @@ function normalizeRange(startIndex = 0, endIndex = 4) {
  */
 export async function fetchSeoulAllEventsJSON({
   // direct 모드: openapi 직접 호출
-  seoulKey = (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
+  seoulKey = (process.env.REACT_APP_SEOUL_KEY || "").trim(),
   // proxy 모드: 개발 프록시(setupProxy.js)로 키를 숨겨서 호출(ex. /api/seoul/…)
   useProxy = false,
   // 한 번에 가져올 개수 (200 추천)
@@ -71,7 +71,7 @@ export async function fetchSeoulAllEventsJSON({
     const url = `${base}/json/culturalEventInfo/${start}/${end}/`; 
 
     const res = await fetch(url, { cache: "no-store", signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status} @ ${url}`);
+    if (!res.ok) throw new Error(` ${res.status} @ ${url}`);
     const json = await res.json();
 
     const rows = json?.culturalEventInfo?.row || [];
@@ -106,7 +106,7 @@ export async function fetchSeoulAllEventsJSON({
  */
 export async function fetchSeoulRecommendedEvents({
   // [수정] process.env 중복 제거
-  seoulKey = (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
+  seoulKey = (process.env.REACT_APP_SEOUL_KEY || "").trim(),
   useProxy = false,
   startIndex = 0,
   endIndex = 4,
@@ -142,7 +142,7 @@ export async function fetchSeoulRecommendedEvents({
  *    * codename, guname: 필요시 필터 (기본은 전체)
  */
 export async function fetchSeoulDailyEvents({
-  seoulKey = (process.env.NEXT_PUBLIC_SEOUL_KEY || "").trim(),
+  seoulKey = (process.env.REACT_APP_SEOUL_KEY || "").trim(),
   useProxy = false,
   date,
   startIndex = 0,
