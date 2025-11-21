@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/seoul/:path*",
-      "destination": "https://openapi.seoul.go.kr:8088/57516a724b79656f37316e536d4677/:path*"
+      "destination": "http://openapi.seoul.go.kr:8088/57516a724b79656f37316e536d4677/:path*"
     }
   ]
 }
