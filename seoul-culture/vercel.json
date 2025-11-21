@@ -1,9 +1,8 @@
-// vercel.json
 {
   "rewrites": [
     {
       "source": "/api/seoul/(.*)",
-      "destination": "https://openapi.seoul.go.kr/:1" 
+      "destination": "https://openapi.seoul.go.kr/:1"
     }
   ]
 }
