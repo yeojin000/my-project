@@ -90,7 +90,7 @@ const parseToDate = (s) => {
 };
 const normalizeRangeLabel = (s,e)=>`${s?.replaceAll(".","-")||""}${e?` ~ ${e?.replaceAll(".","-")}`:""}`;
 
-/* === 이벤트 정규화 === */
+/* === [수정됨] 이벤트 정규화 (날짜 객체 포함) === */
 function normalizeEvents(json) {
   return (json?.culturalEventInfo?.row || []).map((r, idx) => {
     const start = r.STRTDATE || r.DATE;
@@ -106,9 +106,75 @@ function normalizeEvents(json) {
       lat: null,
       lng: null,
       dateLabel: normalizeRangeLabel(start, end),
+      startDate, // 필터링을 위해 추가
+      endDate,   // 필터링을 위해 추가
     };
   });
 }
+
+/* === [추가됨] 누락되었던 함수들 === */
+
+// 1. 지오코딩 캐시 불러오기
+const loadGeoCache = () => {
+  try {
+    return JSON.parse(localStorage.getItem("sn_geo_cache") || "{}");
+  } catch {
+    return {};
+  }
+};
+
+// 2. 지오코딩 캐시 저장하기
+const saveGeoCache = (data) => {
+  localStorage.setItem("sn_geo_cache", JSON.stringify(data));
+};
+
+// 3. 서울 범위 확인 (대략적인 사각 범위)
+const isWithinSeoulBoundary = (lat, lng) => {
+  return lat > 37.41 && lat < 37.72 && lng > 126.76 && lng < 127.19;
+};
+
+// 4. 날짜 범위 필터링 함수
+const inRange = (item, startStr, endStr) => {
+  if (!startStr || !endStr) return true;
+  const s = new Date(startStr);
+  const e = new Date(endStr);
+  // 이벤트 기간이 선택된 기간과 겹치는지 확인
+  return item.endDate >= s && item.startDate <= e;
+};
+
+// 5. 데이터 가져오기 함수 (fetchSeoulAllEventsJSON)
+const fetchSeoulAllEventsJSON = async ({ useProxy, pageSize, hardLimit }) => {
+  // API 키가 없으면 빈 배열 반환
+  if (!SEOUL_API_BASE) return [];
+
+  let allRows = [];
+  let startIndex = 1;
+  
+  // 최대 5번까지만 요청 (무한 루프 방지 및 안전장치)
+  const MAX_LOOPS = Math.ceil(hardLimit / pageSize) || 5; 
+
+  for (let i = 0; i < MAX_LOOPS; i++) {
+    const endIndex = startIndex + pageSize - 1;
+    const url = `${SEOUL_API_BASE}/${startIndex}/${endIndex}/`;
+
+    try {
+      const res = await fetch(url);
+      const json = await res.json();
+      const rows = json?.culturalEventInfo?.row;
+
+      if (!rows || rows.length === 0) break;
+
+      allRows = [...allRows, ...rows];
+      if (allRows.length >= hardLimit) break; // 제한 개수 도달 시 중단
+
+      startIndex += pageSize;
+    } catch (err) {
+      console.error("API Fetch Error:", err);
+      break;
+    }
+  }
+  return allRows.slice(0, hardLimit);
+};
 
 
 export default function MapPage() {
