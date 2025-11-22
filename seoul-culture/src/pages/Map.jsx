@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
 const KAKAO_KEY = (process.env.REACT_APP_KAKAO_MAP_KEY || "").trim();
 
-/* === 서울시 API 주소 설정 (배포/로컬 분기 처리) === */
+/* === 서울시 API 주소 설정 === */
 const IS_PROD = process.env.NODE_ENV === "production";
 const SEOUL_API_BASE = IS_PROD
   ? "/api/seoul/json/culturalEventInfo"
@@ -24,7 +24,7 @@ const AREAS = [
 ];
 const QUICK_RANGES = ["오늘", "이번 주", "이번 달"];
 
-/* === 서울시 행정구 중심 좌표(대략) === */
+/* === 서울시 행정구 중심 좌표 === */
 const GU_CENTER = {
   종로구: [37.5730, 126.9794], 중구: [37.5636, 126.9976], 용산구: [37.5326, 126.9905],
   성동구: [37.5636, 127.0364], 광진구: [37.5386, 127.0822], 동대문구: [37.5744, 127.0396],
@@ -37,7 +37,7 @@ const GU_CENTER = {
   강동구: [37.5301, 127.1238]
 };
 
-/* === 즐겨찾기 유틸(localStorage) === */
+/* === 유틸리티 함수들 === */
 const LS_FAV = "sn_favorites";
 const loadFavs = () => { try { return JSON.parse(localStorage.getItem(LS_FAV) || "[]"); } catch { return []; } };
 const saveFavs = (list) => localStorage.setItem(LS_FAV, JSON.stringify(list));
@@ -50,13 +50,11 @@ const toggleFav = (item) => {
   return next;
 };
 
-/* === Kakao SDK 로더 === */
 const loadKakao = () =>
   new Promise((resolve, reject) => {
     if (window.kakao && window.kakao.maps) { resolve(window.kakao); return; }
     const key = KAKAO_KEY;
-    if (!key) return reject(new Error("REACT_APP_KAKAO_MAP_KEY가 설정되지 않았습니다."));
-    
+    if (!key) return reject(new Error("REACT_APP_KAKAO_MAP_KEY 확인 필요"));
     const ID = "kakao-maps-sdk";
     const exist = document.getElementById(ID);
     const onLoaded = () => {
@@ -68,15 +66,12 @@ const loadKakao = () =>
       return;
     }
     const s = document.createElement("script");
-    s.id = ID;
-    s.async = true;
+    s.id = ID; s.async = true;
     s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&libraries=services,clusterer,drawing&autoload=false`;
-    s.onload = onLoaded;
-    s.onerror = reject;
+    s.onload = onLoaded; s.onerror = reject;
     document.head.appendChild(s);
   });
 
-/* === API 유틸 === */
 const PAGE_SIZE = 200;
 function toHighLevelCategory(codename = "", themecode = "") {
   const c = String(codename);
@@ -86,7 +81,6 @@ function toHighLevelCategory(codename = "", themecode = "") {
   return "기타";
 }
 
-/* === 날짜 유틸 === */
 const ymd = (d) => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -113,7 +107,6 @@ const normalizeRangeLabel = (s = "", e = "") => {
   return S || E;
 };
 
-/* === 데이터 정규화 === */
 function normalizeEvents(json) {
   const rows = json?.culturalEventInfo?.row || [];
   return rows.map((r, idx) => {
@@ -133,18 +126,15 @@ function normalizeEvents(json) {
       dateLabel: normalizeRangeLabel(startStr, endStr),
       homepage: r.ORG_LINK || r.HMPG_ADDR || "",
       fee: r.USE_FEE || "",
-      lat: null,
-      lng: null,
+      lat: null, lng: null,
     };
   });
 }
 
-/* === 좌표 캐시 === */
 const LS_GEO = "sn_geo_cache_v1";
 const loadGeoCache = () => { try { return JSON.parse(localStorage.getItem(LS_GEO) || "{}"); } catch { return {}; } };
 const saveGeoCache = (obj) => localStorage.setItem(LS_GEO, JSON.stringify(obj));
 
-/* === 날짜 필터 === */
 const inRange = (ev, startISO, endISO) => {
   if (!startISO && !endISO) return true;
   const s = ev.dateStart ? new Date(ev.dateStart + "T00:00:00") : null;
@@ -180,7 +170,7 @@ export default function MapPage() {
   const clusterRef = useRef(null);
   const kakaoRef = useRef(null);
 
-  /* Kakao + 데이터 로드 */
+  /* 데이터 로드 */
   useEffect(() => {
     let disposed = false;
     (async () => {
@@ -195,16 +185,12 @@ export default function MapPage() {
           mapRef.current = map;
         }
 
-        setLoading(true);
-        setErr(null);
-
-        if (!SEOUL_API_BASE) throw new Error("REACT_APP_SEOUL_KEY 확인 필요");
+        setLoading(true); setErr(null);
+        if (!SEOUL_API_BASE) throw new Error("API 키 확인 필요");
 
         const userStartISO = startDate || ymd(new Date());
         const userStart = new Date(userStartISO + "T00:00:00");
-        let pageStart = 1;
-        const allRows = [];
-        let stop = false;
+        let pageStart = 1; const allRows = []; let stop = false;
 
         while (!stop) {
           const pageEnd = pageStart + PAGE_SIZE - 1;
@@ -230,40 +216,31 @@ export default function MapPage() {
         }
         const items = normalizeEvents({ culturalEventInfo: { row: allRows } });
         if (!disposed) setEvents(items);
-
-      } catch (e) {
-        if (!disposed) setErr(e);
-      } finally {
-        if (!disposed) setLoading(false);
-      }
+      } catch (e) { if (!disposed) setErr(e); } 
+      finally { if (!disposed) setLoading(false); }
     })();
     return () => { disposed = true; };
   }, [startDate]);
 
-  /* 빠른 기간 */
+  /* 필터/기간 */
   useEffect(() => {
     if (!quick) return;
     const today = new Date();
-    if (quick === "오늘") {
-      const k = ymd(today);
-      setStartDate(k); setEndDate(k); return;
-    }
+    if (quick === "오늘") { setStartDate(ymd(today)); setEndDate(ymd(today)); return; }
     if (quick === "이번 주") {
       const day = today.getDay(); 
-      const diffToMon = day === 0 ? -6 : 1 - day;
-      const mon = new Date(today); mon.setDate(today.getDate() + diffToMon);
+      const diff = day === 0 ? -6 : 1 - day;
+      const mon = new Date(today); mon.setDate(today.getDate() + diff);
       const sun = new Date(mon);   sun.setDate(mon.getDate() + 6);
       setStartDate(ymd(mon)); setEndDate(ymd(sun)); return;
     }
     if (quick === "이번 달") {
       const y = today.getFullYear(), m = today.getMonth();
-      const s = new Date(y, m, 1);
-      const e = new Date(y, m + 1, 0);
-      setStartDate(ymd(s)); setEndDate(ymd(e)); return;
+      setStartDate(ymd(new Date(y, m, 1))); setEndDate(ymd(new Date(y, m + 1, 0))); return;
     }
   }, [quick]);
 
-  /* 지역 변경 -> 지도 이동 */
+  /* 지역 변경 시 이동 */
   useEffect(() => {
     const kakao = kakaoRef.current;
     const map = mapRef.current;
@@ -286,7 +263,7 @@ export default function MapPage() {
     }
   }, [area]);
 
-  /* 필터링 */
+  /* 필터링 결과 */
   const filtered = useMemo(() => {
     return events.filter((e) => {
       const byCat = category === "전체" ? true : e.category === category;
@@ -301,17 +278,13 @@ export default function MapPage() {
   useEffect(() => {
     const kakao = kakaoRef.current;
     if (!kakao) return;
-
     const cache = loadGeoCache();
     const ps = new kakao.maps.services.Places();
     const geocoder = new kakao.maps.services.Geocoder();
     let cancelled = false;
     const SEOUL_CENTER = new kakao.maps.LatLng(37.5665, 126.9780);
 
-    const isBadPlace = (txt = "") => {
-      const s = String(txt);
-      return !s.trim() || /온라인|비대면|무관|미정|없음/i.test(s);
-    };
+    const isBadPlace = (txt = "") => !String(txt).trim() || /온라인|비대면|무관|미정|없음/i.test(String(txt));
     const pickSeoulHit = (data, gu) => {
       const inSeoul = data.filter(d => (d.address_name || "").startsWith("서울"));
       const inGu = gu ? inSeoul.filter(d => d.address_name.includes(gu)) : inSeoul;
@@ -321,19 +294,16 @@ export default function MapPage() {
     const fillCoords = async () => {
       const targets = filtered.slice(0, 100); 
       const out = [];
-
       for (const ev of targets) {
         const key = `${ev.gu || ""}|${ev.place || ""}|${ev.title}`;
         if (cache[key]) { out.push({ ...ev, ...cache[key] }); continue; }
 
         let coords = null;
-        if (isBadPlace(ev.place) && GU_CENTER[ev.gu]) {
-          const [lat, lng] = GU_CENTER[ev.gu]; coords = { lat, lng };
-        }
+        if (isBadPlace(ev.place) && GU_CENTER[ev.gu]) coords = { lat: GU_CENTER[ev.gu][0], lng: GU_CENTER[ev.gu][1] };
+
         if (!coords && ev.place) {
-          const query = `${ev.gu ? ev.gu + " " : ""}${ev.place}`.trim();
           coords = await new Promise(resolve => {
-            ps.keywordSearch(query, (data, status) => {
+            ps.keywordSearch(`${ev.gu ? ev.gu + " " : ""}${ev.place}`, (data, status) => {
               if (status === kakao.maps.services.Status.OK && data.length) {
                 const best = pickSeoulHit(data, ev.gu);
                 if (best) return resolve({ lat: Number(best.y), lng: Number(best.x) });
@@ -346,25 +316,21 @@ export default function MapPage() {
           coords = await new Promise(resolve => {
             geocoder.addressSearch(ev.place, (result, status) => {
               if (status === kakao.maps.services.Status.OK && result[0]) {
-                const r = result.find(r => r.address_name.startsWith("서울") && (!ev.gu || r.address_name.includes(ev.gu))) || result[0];
+                const r = result.find(r => r.address_name.startsWith("서울")) || result[0];
                 if (r.address_name.startsWith("서울")) return resolve({ lat: Number(r.y), lng: Number(r.x) });
               }
               resolve(null);
             });
           });
         }
-        if (!coords && GU_CENTER[ev.gu]) {
-          const [lat, lng] = GU_CENTER[ev.gu]; coords = { lat, lng };
-        }
+        if (!coords && GU_CENTER[ev.gu]) coords = { lat: GU_CENTER[ev.gu][0], lng: GU_CENTER[ev.gu][1] };
 
         if (coords) {
           if (!isWithinSeoulBoundary(coords.lat, coords.lng)) {
-            if (GU_CENTER[ev.gu]) {
-              const [lat, lng] = GU_CENTER[ev.gu]; coords = { lat, lng };
-            } else coords = null;
+            if (GU_CENTER[ev.gu]) coords = { lat: GU_CENTER[ev.gu][0], lng: GU_CENTER[ev.gu][1] };
+            else coords = null;
           }
         }
-
         if (coords) {
           cache[key] = coords;
           out.push({ ...ev, ...coords });
@@ -379,13 +345,16 @@ export default function MapPage() {
     return () => { cancelled = true; };
   }, [filtered]);
 
-  /* ★ [수정됨] 마커/클러스터/팝업 처리 */
+  /* [수정 핵심] 
+    이 useEffect는 마커를 '그리는' 역할만 합니다.
+    dependencies에서 [selected]를 제거했습니다.
+    이제 마우스를 올려서 selected 값이 바뀌어도 지도가 깜빡이거나 이동하지 않습니다.
+  */
   useEffect(() => {
     const kakao = kakaoRef.current;
     const map = mapRef.current;
     if (!kakao || !map) return;
 
-    // 1. 기존 요소 제거
     markersRef.current.forEach((m) => m.setMap(null));
     infoRef.current.forEach((i) => i.close());
     markersRef.current = [];
@@ -398,7 +367,6 @@ export default function MapPage() {
     const infos = [];
     const bounds = new kakao.maps.LatLngBounds();
 
-    // 2. 마커 생성 루프
     geoReadyEvents.forEach((ev) => {
       if (ev.lat == null || ev.lng == null) return;
       const pos = new kakao.maps.LatLng(ev.lat, ev.lng);
@@ -406,12 +374,11 @@ export default function MapPage() {
 
       const marker = new kakao.maps.Marker({ position: pos, title: ev.title });
 
-      // 팝업 HTML (홈페이지 링크 적용)
       const iwHtml = `
         <div style="padding:8px 10px; font-size:12px; max-width:240px;">
-          <div style="font-weight:600; margin-bottom:4px; cursor:pointer; color:#333;">
+          <div style="font-weight:600; margin-bottom:4px; cursor:pointer;">
              ${ev.homepage 
-               ? `<a href="${ev.homepage}" target="_blank" style="color:inherit; text-decoration:none;">${ev.title}</a>` 
+               ? `<a href="${ev.homepage}" target="_blank" style="color:#333; text-decoration:none;">${ev.title}</a>` 
                : ev.title}
           </div>
           <div style="color:#666;">${ev.place || ev.gu || ""}</div>
@@ -424,19 +391,15 @@ export default function MapPage() {
         </div>
       `;
 
-      // ★ removable: true -> 우측 상단 X 버튼 생성
       const iw = new kakao.maps.InfoWindow({ content: iwHtml, removable: true });
 
-      // 팝업 열기 함수 (다른 팝업은 닫음)
       const openInfo = () => {
         infos.forEach((i) => i.close());
         iw.open(map, marker);
         setSelected(ev);
       };
 
-      // ★ mouseover 시 팝업 열기
       kakao.maps.event.addListener(marker, "mouseover", openInfo);
-      // 모바일 대응 등을 위해 클릭 시에도 열기
       kakao.maps.event.addListener(marker, "click", openInfo);
 
       markers.push(marker);
@@ -447,31 +410,32 @@ export default function MapPage() {
     infoRef.current = infos;
 
     const clusterer = new kakao.maps.MarkerClusterer({
-      map,
-      markers,
-      averageCenter: true,
-      minLevel: 6,
-      disableClickZoom: false,
+      map, markers, averageCenter: true, minLevel: 6, disableClickZoom: false,
     });
     clusterRef.current = clusterer;
 
-    // ★ 지도 빈 곳 클릭 시 모든 팝업 닫기
     const handleMapClick = () => {
       infos.forEach((i) => i.close());
     };
     kakao.maps.event.addListener(map, "click", handleMapClick);
 
+    // '전체' 지역일 때만 bound 재설정 (필터 변경 시에만 동작)
     if (area === "전체" && markers.length > 0) {
       map.setBounds(bounds, 40, 40, 40, 40);
     }
 
-    // cleanup
     return () => {
       kakao.maps.event.removeListener(map, "click", handleMapClick);
     };
-  }, [geoReadyEvents, area, selected]);
+  }, [geoReadyEvents, area]); // ★ 여기서 selected를 제거함!
 
-  /* 즐겨찾기 토글 */
+  /* 필터 변경 등으로 목록이 바뀌었을 때, 선택된 항목이 목록에 없으면 선택 해제 */
+  useEffect(() => {
+    if (selected && !geoReadyEvents.some((e) => e.id === selected.id)) {
+      setSelected(null);
+    }
+  }, [geoReadyEvents]);
+
   const [, forceFav] = useState(0);
   const onToggleFav = (ev) => {
     toggleFav({
@@ -484,18 +448,16 @@ export default function MapPage() {
   return (
     <div className="min-h-screen bg-white px-6 py-8 max-w-7xl mx-auto">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* 왼쪽 패널 */}
+        {/* 왼쪽 */}
         <aside className="lg:col-span-3">
           <h2 className="font-semibold mb-2">카테고리</h2>
           <select value={category} onChange={(e) => setCategory(e.target.value)} className="border rounded px-2 py-2 w-full mb-4">
             {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-
           <h2 className="font-semibold mb-2">지역(행정구)</h2>
           <select value={area} onChange={(e) => setArea(e.target.value)} className="border rounded px-2 py-2 w-full mb-4">
             {AREAS.map((a) => <option key={a} value={a}>{a}</option>)}
           </select>
-
           <h2 className="font-semibold mb-2">날짜</h2>
           <div className="grid grid-cols-3 gap-2 mb-2">
             {QUICK_RANGES.map((r) => (
@@ -534,7 +496,6 @@ export default function MapPage() {
               <p className="text-sm text-gray-700">{selected.place || selected.gu || ""}</p>
               <p className="text-sm text-gray-700 mt-1">📅 {selected.dateLabel}</p>
               {selected.fee && <p className="text-xs text-gray-500 mt-1">요금: {selected.fee}</p>}
-
               <div className="mt-3 flex items-center gap-3">
                 <button onClick={() => onToggleFav(selected)} className="text-xl" title="즐겨찾기 토글">
                   {isFav(selected.id) ? "❤️" : "🤍"}
