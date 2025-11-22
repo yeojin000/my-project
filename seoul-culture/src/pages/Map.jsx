@@ -1,11 +1,8 @@
 // src/pages/Map.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-// ✅ 서울 API 헬퍼(프록시 사용) 추가
-import { fetchSeoulAllEventsJSON } from "../lib/seoulApi";
 
 /* === 환경변수 === */
-// ✅ 서울키는 더 이상 직접 쓰지 않음 (프록시 사용)
-// const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
+const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
 const KAKAO_KEY = (process.env.REACT_APP_KAKAO_MAP_KEY || "").trim();
 
 /* === 필터 옵션 === */
@@ -48,7 +45,7 @@ const GU_CENTER = {
   강동구: [37.5301, 127.1238]
 };
 
-/* === 즐겨찾기 유틸(localStorage) === */
+/* === 즐겨찾기 관련 localStorage === */
 const LS_FAV = "sn_favorites";
 const loadFavs = () => { try { return JSON.parse(localStorage.getItem(LS_FAV) || "[]"); } catch { return []; } };
 const saveFavs = (list) => localStorage.setItem(LS_FAV, JSON.stringify(list));
@@ -61,126 +58,58 @@ const toggleFav = (item) => {
   return next;
 };
 
-/* === Kakao SDK 로더 (.env 키 사용) === */
+/* === Kakao Maps Loader === */
 const loadKakao = () =>
   new Promise((resolve, reject) => {
     if (window.kakao && window.kakao.maps) { resolve(window.kakao); return; }
-
-    const key = KAKAO_KEY;
-    if (!key) return reject(new Error("REACT_APP_KAKAO_MAP_KEY가 설정되지 않았습니다 (.env 확인)."));
-
-    const ID = "kakao-maps-sdk";
-    const exist = document.getElementById(ID);
-
-    const onLoaded = () => {
-      try { window.kakao.maps.load(() => resolve(window.kakao)); }
-      catch (e) { reject(e); }
+    if (!KAKAO_KEY) return reject(new Error("REACT_APP_KAKAO_MAP_KEY가 설정되지 않았습니다."));
+    const ID = "kakao-sdk";
+    if (document.getElementById(ID)) return resolve(window.kakao);
+    const script = document.createElement("script");
+    script.id = ID;
+    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(KAKAO_KEY)}&libraries=services,clusterer,drawing&autoload=false`;
+    script.onload = () => {
+      window.kakao.maps.load(() => resolve(window.kakao));
     };
-
-    if (exist) {
-      exist.addEventListener("load", onLoaded, { once: true });
-      exist.addEventListener("error", reject, { once: true });
-      return;
-    }
-
-    const s = document.createElement("script");
-    s.id = ID;
-    s.async = true;
-    s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&libraries=services,clusterer,drawing&autoload=false`;
-    s.onload = onLoaded;
-    s.onerror = reject;
-    document.head.appendChild(s);
+    script.onerror = reject;
+    document.head.appendChild(script);
   });
 
-/* === 서울시 문화행사 OpenAPI(JSON) === */
+/* === Seoul API === */
 const PAGE_SIZE = 200;
-// ✅ SEOUL_API_BASE/SEOUL_KEY 삭제 (프록시 + seoulApi.js 사용)
+const SEOUL_API_BASE = SEOUL_KEY
+  ? `https://openapi.seoul.go.kr:8088/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo`
+  : null;
 
-/* === 상위 카테고리 매핑 === */
-function toHighLevelCategory(codename = "", themecode = "") {
-  const c = String(codename);
-  if (["콘서트", "클래식", "국악", "무용", "연극", "뮤지컬/오페라", "축제-기타"].some(k => c.includes(k))) return "공연";
-  if (c.includes("전시/미술")) return "전시";
-  if (c.includes("교육/체험") || String(themecode).includes("교육")) return "교육/체험";
-  return "기타";
-}
-
-/* === 날짜 유틸 === */
-const ymd = (d) => {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-};
-const parseToDate = (s = "") => {
+/* === 날짜 처리 유틸 === */
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const parseToDate = (s) => {
   if (!s) return null;
-  const raw = String(s).trim();
-  if (/^\d{8}$/.test(raw)) {
-    const y = raw.slice(0, 4), m = raw.slice(4, 6), d = raw.slice(6, 8);
-    const dt = new Date(`${y}-${m}-${d}T00:00:00`);
-    return isNaN(dt) ? null : dt;
-  }
-  const normalized = raw.replaceAll(".", "-");
-  const dt = new Date(normalized);
-  return isNaN(dt) ? null : dt;
+  const raw = s.replaceAll(".", "-").trim();
+  return new Date(isNaN(raw) ? raw : `${raw.slice(0,4)}-${raw.slice(4,6)}-${raw.slice(6,8)}T00:00:00`);
 };
-const normalizeRangeLabel = (s = "", e = "") => {
-  const S = (s || "").replaceAll(".", "-");
-  const E = (e || "").replaceAll(".", "-");
-  if (!S && !E) return "일정 미정";
-  if (S && E) return `${S} ~ ${E}`;
-  return S || E;
-};
+const normalizeRangeLabel = (s,e)=>`${s?.replaceAll(".","-")||""}${e?` ~ ${e?.replaceAll(".","-")}`:""}`;
 
-/* === API → 앱용 이벤트 정규화(좌표는 나중에 채움) === */
+/* === 이벤트 정규화 === */
 function normalizeEvents(json) {
-  const rows = json?.culturalEventInfo?.row || [];
-  return rows.map((r, idx) => {
-    const startStr = r.STRTDATE || r.DATE;
-    const endStr = r.END_DATE || r.ENDDATE || r.END;
-    const start = parseToDate(startStr);
-    const end = parseToDate(endStr) || start;
-    const category = toHighLevelCategory(r.CODENAME, r.THEMECODE);
-
+  return (json?.culturalEventInfo?.row || []).map((r, idx) => {
+    const start = r.STRTDATE || r.DATE;
+    const end = r.END_DATE || r.ENDDATE || r.END || start;
+    const startDate = parseToDate(start);
+    const endDate = parseToDate(end) || startDate;
     return {
       id: r.SVCID || `evt_${idx}`,
       title: r.TITLE || r.SVCNM || "무제",
-      category,
+      category: r.CODENAME || "",
       place: r.PLACE || "",
       gu: r.GUNAME || "",
-      dateStart: start ? ymd(start) : "",
-      dateEnd: end ? ymd(end) : "",
-      dateLabel: normalizeRangeLabel(startStr, endStr),
-      homepage: r.ORG_LINK || r.HMPG_ADDR || "",
-      fee: r.USE_FEE || "",
       lat: null,
       lng: null,
+      dateLabel: normalizeRangeLabel(start, end),
     };
   });
 }
 
-/* === 좌표 캐시(localStorage) === */
-const LS_GEO = "sn_geo_cache_v1";
-const loadGeoCache = () => { try { return JSON.parse(localStorage.getItem(LS_GEO) || "{}"); } catch { return {}; } };
-const saveGeoCache = (obj) => localStorage.setItem(LS_GEO, JSON.stringify(obj));
-
-/* === 날짜 필터 === */
-const inRange = (ev, startISO, endISO) => {
-  if (!startISO && !endISO) return true;
-  const s = ev.dateStart ? new Date(ev.dateStart + "T00:00:00") : null;
-  const e = ev.dateEnd ? new Date(ev.dateEnd + "T23:59:59") : s;
-  const S = startISO ? new Date(startISO + "T00:00:00") : null;
-  const E = endISO ? new Date(endISO + "T23:59:59") : null;
-  if (!s || !e) return false;
-  const leftOK = !E || s <= E;
-  const rightOK = !S || e >= S;
-  return leftOK && rightOK;
-};
-
-// 서울시 대략적인 경계 (지오코딩 결과 필터링용)
-const isWithinSeoulBoundary = (lat, lng) => {
-  return lat >= 37.4 && lat <= 37.7 && lng >= 126.7 && lng <= 127.2;
-};
 
 export default function MapPage() {
   /* 필터 상태 */

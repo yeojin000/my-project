@@ -70,26 +70,13 @@ function normalizeRecent(rawArr) {
 }
 
 /* ===== Kakao Maps loader ===== */
-// 🔁 Map.jsx와 동일한 방식으로 환경변수 사용
-const KAKAO_KEY = (process.env.REACT_APP_KAKAO_MAP_KEY || "").trim();
-
 const loadKakao = () =>
   new Promise((resolve, reject) => {
     if (window.kakao && window.kakao.maps) {
       resolve(window.kakao);
       return;
     }
-
-    const key = KAKAO_KEY;
-    if (!key) {
-      reject(
-        new Error(
-          "REACT_APP_KAKAO_MAP_KEY가 설정되지 않았습니다 (.env/Vercel 환경변수 확인)."
-        )
-      );
-      return;
-    }
-
+    const key = process.env.REACT_APP_KAKAO_MAP_KEY;
     const ID = "kakao-maps-sdk";
     const exist = document.getElementById(ID);
     const onLoaded = () => {
@@ -99,19 +86,15 @@ const loadKakao = () =>
         reject(e);
       }
     };
-
     if (exist) {
       exist.addEventListener("load", onLoaded, { once: true });
       exist.addEventListener("error", reject, { once: true });
       return;
     }
-
     const s = document.createElement("script");
     s.id = ID;
     s.async = true;
-    s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(
-      key
-    )}&libraries=services,clusterer&autoload=false`;
+    s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${key}&libraries=services,clusterer&autoload=false`;
     s.onload = onLoaded;
     s.onerror = reject;
     document.head.appendChild(s);
@@ -158,7 +141,6 @@ const GU_CENTER = {
   강동구: [37.5301, 127.1238],
 };
 
-/* ===== 구 이름 추출용 정규식 ===== */
 const GU_REGEX =
   /(종로구|중구|용산구|성동구|광진구|동대문구|중랑구|성북구|강북구|도봉구|노원구|은평구|서대문구|마포구|양천구|강서구|구로구|금천구|영등포구|동작구|관악구|서초구|강남구|송파구|강동구)/;
 
@@ -170,16 +152,14 @@ export default function MyPage() {
   const [geoFavs, setGeoFavs] = useState([]);
   const [kakaoReady, setKakaoReady] = useState(false);
 
-  // Kakao map refs
   const mapEl = useRef(null);
   const mapRef = useRef(null);
   const kakaoRef = useRef(null);
   const clusterRef = useRef(null);
   const markersRef = useRef([]);
   const infoRef = useRef([]);
-  const markerMapRef = useRef({}); // id → { marker, info }
+  const markerMapRef = useRef({});
 
-  /* 지도 초기화 */
   useEffect(() => {
     let off = false;
     (async () => {
@@ -197,6 +177,9 @@ export default function MyPage() {
       off = true;
     };
   }, []);
+
+
+
 
   /* 즐겨찾기 → 좌표 채우기 */
   useEffect(() => {
