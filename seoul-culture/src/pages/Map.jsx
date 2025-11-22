@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
 const KAKAO_KEY = (process.env.REACT_APP_KAKAO_MAP_KEY || "").trim();
 
+
 /* === 필터 옵션 === */
 const CATEGORIES = ["전체", "공연", "전시", "교육/체험", "기타"];
 const AREAS = [
@@ -75,11 +76,18 @@ const loadKakao = () =>
     document.head.appendChild(script);
   });
 
-/* === Seoul API === */
+/* === Seoul API (수정됨) === */
 const PAGE_SIZE = 200;
-const SEOUL_API_BASE = SEOUL_KEY
-  ? `https://openapi.seoul.go.kr:8088/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo`
-  : null;
+
+// 배포 환경(Vercel)인지 확인
+const IS_PROD = process.env.NODE_ENV === "production";
+
+// 주소 설정 로직 변경
+const SEOUL_API_BASE = IS_PROD
+  ? "/api/seoul/json/culturalEventInfo"  // [배포 환경] vercel.json에서 키를 넣어주므로 여기선 생략!
+  : SEOUL_KEY
+    ? `http://openapi.seoul.go.kr:8088/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo` // [로컬 환경] 직접 키 포함
+    : null;
 
 /* === 날짜 처리 유틸 === */
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
