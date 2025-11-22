@@ -5,6 +5,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 const SEOUL_KEY = (process.env.REACT_APP_SEOUL_KEY || "").trim();
 const KAKAO_KEY = (process.env.REACT_APP_KAKAO_MAP_KEY || "").trim();
 
+/* === [수정 1] 서울시 API 주소 설정 (배포/로컬 분기 처리) === */
+// 설명: 배포(Vercel) 환경에서는 vercel.json이 키를 자동으로 넣어주므로, 여기서는 키를 뺍니다.
+const IS_PROD = process.env.NODE_ENV === "production";
+const SEOUL_API_BASE = IS_PROD
+  ? "/api/seoul/json/culturalEventInfo" // 배포 시: 프록시 사용 (키 생략)
+  : SEOUL_KEY
+    ? `http://openapi.seoul.go.kr:8088/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo` // 로컬 시: 키 포함
+    : null;
 
 /* === 필터 옵션 === */
 const CATEGORIES = ["전체", "공연", "전시", "교육/체험", "기타"];
@@ -19,34 +27,18 @@ const QUICK_RANGES = ["오늘", "이번 주", "이번 달"];
 
 /* === 서울시 행정구 중심 좌표(대략) === */
 const GU_CENTER = {
-  종로구: [37.5730, 126.9794],
-  중구: [37.5636, 126.9976],
-  용산구: [37.5326, 126.9905],
-  성동구: [37.5636, 127.0364],
-  광진구: [37.5386, 127.0822],
-  동대문구: [37.5744, 127.0396],
-  중랑구: [37.6060, 127.0929],
-  성북구: [37.5894, 127.0167],
-  강북구: [37.6396, 127.0257],
-  도봉구: [37.6688, 127.0471],
-  노원구: [37.6542, 127.0568],
-  은평구: [37.6176, 126.9227],
-  서대문구: [37.5791, 126.9368],
-  마포구: [37.5665, 126.9018],
-  양천구: [37.5169, 126.8665],
-  강서구: [37.5510, 126.8495],
-  구로구: [37.4954, 126.8874],
-  금천구: [37.4599, 126.9001],
-  영등포구: [37.5263, 126.8963],
-  동작구: [37.5124, 126.9393],
-  관악구: [37.4784, 126.9516],
-  서초구: [37.4836, 127.0326],
-  강남구: [37.5173, 127.0473],
-  송파구: [37.5112, 127.0980],
+  종로구: [37.5730, 126.9794], 중구: [37.5636, 126.9976], 용산구: [37.5326, 126.9905],
+  성동구: [37.5636, 127.0364], 광진구: [37.5386, 127.0822], 동대문구: [37.5744, 127.0396],
+  중랑구: [37.6060, 127.0929], 성북구: [37.5894, 127.0167], 강북구: [37.6396, 127.0257],
+  도봉구: [37.6688, 127.0471], 노원구: [37.6542, 127.0568], 은평구: [37.6176, 126.9227],
+  서대문구: [37.5791, 126.9368], 마포구: [37.5665, 126.9018], 양천구: [37.5169, 126.8665],
+  강서구: [37.5510, 126.8495], 구로구: [37.4954, 126.8874], 금천구: [37.4599, 126.9001],
+  영등포구: [37.5263, 126.8963], 동작구: [37.5124, 126.9393], 관악구: [37.4784, 126.9516],
+  서초구: [37.4836, 127.0326], 강남구: [37.5173, 127.0473], 송파구: [37.5112, 127.0980],
   강동구: [37.5301, 127.1238]
 };
 
-/* === 즐겨찾기 관련 localStorage === */
+/* === 즐겨찾기 유틸(localStorage) === */
 const LS_FAV = "sn_favorites";
 const loadFavs = () => { try { return JSON.parse(localStorage.getItem(LS_FAV) || "[]"); } catch { return []; } };
 const saveFavs = (list) => localStorage.setItem(LS_FAV, JSON.stringify(list));
@@ -59,138 +51,127 @@ const toggleFav = (item) => {
   return next;
 };
 
-/* === Kakao Maps Loader === */
+/* === Kakao SDK 로더 (.env 키 사용) === */
 const loadKakao = () =>
   new Promise((resolve, reject) => {
     if (window.kakao && window.kakao.maps) { resolve(window.kakao); return; }
-    if (!KAKAO_KEY) return reject(new Error("REACT_APP_KAKAO_MAP_KEY가 설정되지 않았습니다."));
-    const ID = "kakao-sdk";
-    if (document.getElementById(ID)) return resolve(window.kakao);
-    const script = document.createElement("script");
-    script.id = ID;
-    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(KAKAO_KEY)}&libraries=services,clusterer,drawing&autoload=false`;
-    script.onload = () => {
-      window.kakao.maps.load(() => resolve(window.kakao));
+    const key = KAKAO_KEY;
+    if (!key) return reject(new Error("REACT_APP_KAKAO_MAP_KEY가 설정되지 않았습니다 (.env 확인)."));
+    
+    const ID = "kakao-maps-sdk";
+    const exist = document.getElementById(ID);
+    const onLoaded = () => {
+      try { window.kakao.maps.load(() => resolve(window.kakao)); } catch (e) { reject(e); }
     };
-    script.onerror = reject;
-    document.head.appendChild(script);
+    
+    if (exist) {
+      exist.addEventListener("load", onLoaded, { once: true });
+      exist.addEventListener("error", reject, { once: true });
+      return;
+    }
+    
+    const s = document.createElement("script");
+    s.id = ID;
+    s.async = true;
+    s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&libraries=services,clusterer,drawing&autoload=false`;
+    s.onload = onLoaded;
+    s.onerror = reject;
+    document.head.appendChild(s);
   });
 
-/* === Seoul API (수정됨) === */
+/* === 서울시 문화행사 OpenAPI 관련 유틸 === */
 const PAGE_SIZE = 200;
 
-// 배포 환경(Vercel)인지 확인
-const IS_PROD = process.env.NODE_ENV === "production";
+function toHighLevelCategory(codename = "", themecode = "") {
+  const c = String(codename);
+  if (["콘서트", "클래식", "국악", "무용", "연극", "뮤지컬/오페라", "축제-기타"].some(k => c.includes(k))) return "공연";
+  if (c.includes("전시/미술")) return "전시";
+  if (c.includes("교육/체험") || String(themecode).includes("교육")) return "교육/체험";
+  return "기타";
+}
 
-// 주소 설정 로직 변경
-const SEOUL_API_BASE = IS_PROD
-  ? "/api/seoul/json/culturalEventInfo"  // [배포 환경] vercel.json에서 키를 넣어주므로 여기선 생략!
-  : SEOUL_KEY
-    ? `http://openapi.seoul.go.kr:8088/${encodeURIComponent(SEOUL_KEY)}/json/culturalEventInfo` // [로컬 환경] 직접 키 포함
-    : null;
-
-/* === 날짜 처리 유틸 === */
-const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-const parseToDate = (s) => {
-  if (!s) return null;
-  const raw = s.replaceAll(".", "-").trim();
-  return new Date(isNaN(raw) ? raw : `${raw.slice(0,4)}-${raw.slice(4,6)}-${raw.slice(6,8)}T00:00:00`);
+/* === 날짜 유틸 === */
+const ymd = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 };
-const normalizeRangeLabel = (s,e)=>`${s?.replaceAll(".","-")||""}${e?` ~ ${e?.replaceAll(".","-")}`:""}`;
+const parseToDate = (s = "") => {
+  if (!s) return null;
+  const raw = String(s).trim();
+  if (/^\d{8}$/.test(raw)) {
+    const y = raw.slice(0, 4), m = raw.slice(4, 6), d = raw.slice(6, 8);
+    const dt = new Date(`${y}-${m}-${d}T00:00:00`);
+    return isNaN(dt) ? null : dt;
+  }
+  const normalized = raw.replaceAll(".", "-");
+  const dt = new Date(normalized);
+  return isNaN(dt) ? null : dt;
+};
+const normalizeRangeLabel = (s = "", e = "") => {
+  const S = (s || "").replaceAll(".", "-");
+  const E = (e || "").replaceAll(".", "-");
+  if (!S && !E) return "일정 미정";
+  if (S && E) return `${S} ~ ${E}`;
+  return S || E;
+};
 
-/* === [수정됨] 이벤트 정규화 (날짜 객체 포함) === */
+/* === API → 앱용 이벤트 정규화 === */
 function normalizeEvents(json) {
-  return (json?.culturalEventInfo?.row || []).map((r, idx) => {
-    const start = r.STRTDATE || r.DATE;
-    const end = r.END_DATE || r.ENDDATE || r.END || start;
-    const startDate = parseToDate(start);
-    const endDate = parseToDate(end) || startDate;
+  const rows = json?.culturalEventInfo?.row || [];
+  return rows.map((r, idx) => {
+    const startStr = r.STRTDATE || r.DATE;
+    const endStr = r.END_DATE || r.ENDDATE || r.END;
+    const start = parseToDate(startStr);
+    const end = parseToDate(endStr) || start;
+    const category = toHighLevelCategory(r.CODENAME, r.THEMECODE);
     return {
       id: r.SVCID || `evt_${idx}`,
       title: r.TITLE || r.SVCNM || "무제",
-      category: r.CODENAME || "",
+      category,
       place: r.PLACE || "",
       gu: r.GUNAME || "",
+      dateStart: start ? ymd(start) : "",
+      dateEnd: end ? ymd(end) : "",
+      dateLabel: normalizeRangeLabel(startStr, endStr),
+      homepage: r.ORG_LINK || r.HMPG_ADDR || "",
+      fee: r.USE_FEE || "",
       lat: null,
       lng: null,
-      dateLabel: normalizeRangeLabel(start, end),
-      startDate, // 필터링을 위해 추가
-      endDate,   // 필터링을 위해 추가
     };
   });
 }
 
-/* === [추가됨] 누락되었던 함수들 === */
+/* === 좌표 캐시(localStorage) === */
+const LS_GEO = "sn_geo_cache_v1";
+const loadGeoCache = () => { try { return JSON.parse(localStorage.getItem(LS_GEO) || "{}"); } catch { return {}; } };
+const saveGeoCache = (obj) => localStorage.setItem(LS_GEO, JSON.stringify(obj));
 
-// 1. 지오코딩 캐시 불러오기
-const loadGeoCache = () => {
-  try {
-    return JSON.parse(localStorage.getItem("sn_geo_cache") || "{}");
-  } catch {
-    return {};
-  }
+/* === 날짜 필터 === */
+const inRange = (ev, startISO, endISO) => {
+  if (!startISO && !endISO) return true;
+  const s = ev.dateStart ? new Date(ev.dateStart + "T00:00:00") : null;
+  const e = ev.dateEnd ? new Date(ev.dateEnd + "T23:59:59") : s;
+  const S = startISO ? new Date(startISO + "T00:00:00") : null;
+  const E = endISO ? new Date(endISO + "T23:59:59") : null;
+  if (!s || !e) return false;
+  const leftOK = !E || s <= E;
+  const rightOK = !S || e >= S;
+  return leftOK && rightOK;
 };
 
-// 2. 지오코딩 캐시 저장하기
-const saveGeoCache = (data) => {
-  localStorage.setItem("sn_geo_cache", JSON.stringify(data));
-};
-
-// 3. 서울 범위 확인 (대략적인 사각 범위)
+// 서울시 대략적인 경계
 const isWithinSeoulBoundary = (lat, lng) => {
-  return lat > 37.41 && lat < 37.72 && lng > 126.76 && lng < 127.19;
+  return lat >= 37.4 && lat <= 37.7 && lng >= 126.7 && lng <= 127.2;
 };
-
-// 4. 날짜 범위 필터링 함수
-const inRange = (item, startStr, endStr) => {
-  if (!startStr || !endStr) return true;
-  const s = new Date(startStr);
-  const e = new Date(endStr);
-  // 이벤트 기간이 선택된 기간과 겹치는지 확인
-  return item.endDate >= s && item.startDate <= e;
-};
-
-// 5. 데이터 가져오기 함수 (fetchSeoulAllEventsJSON)
-const fetchSeoulAllEventsJSON = async ({ useProxy, pageSize, hardLimit }) => {
-  // API 키가 없으면 빈 배열 반환
-  if (!SEOUL_API_BASE) return [];
-
-  let allRows = [];
-  let startIndex = 1;
-  
-  // 최대 5번까지만 요청 (무한 루프 방지 및 안전장치)
-  const MAX_LOOPS = Math.ceil(hardLimit / pageSize) || 5; 
-
-  for (let i = 0; i < MAX_LOOPS; i++) {
-    const endIndex = startIndex + pageSize - 1;
-    const url = `${SEOUL_API_BASE}/${startIndex}/${endIndex}/`;
-
-    try {
-      const res = await fetch(url);
-      const json = await res.json();
-      const rows = json?.culturalEventInfo?.row;
-
-      if (!rows || rows.length === 0) break;
-
-      allRows = [...allRows, ...rows];
-      if (allRows.length >= hardLimit) break; // 제한 개수 도달 시 중단
-
-      startIndex += pageSize;
-    } catch (err) {
-      console.error("API Fetch Error:", err);
-      break;
-    }
-  }
-  return allRows.slice(0, hardLimit);
-};
-
 
 export default function MapPage() {
   /* 필터 상태 */
   const [category, setCategory] = useState("전체");
   const [area, setArea] = useState("전체");
   const [quick, setQuick] = useState("오늘");
-  const [startDate, setStartDate] = useState(ymd(new Date())); // 기본: 오늘
+  const [startDate, setStartDate] = useState(ymd(new Date())); 
   const [endDate, setEndDate] = useState("");
 
   /* 데이터/지도 상태 */
@@ -206,7 +187,7 @@ export default function MapPage() {
   const clusterRef = useRef(null);
   const kakaoRef = useRef(null);
 
-  /* Kakao + 서울 OpenAPI 데이터 로드 (프록시 사용) */
+  /* Kakao + 데이터 로드 */
   useEffect(() => {
     let disposed = false;
 
@@ -225,20 +206,54 @@ export default function MapPage() {
         setLoading(true);
         setErr(null);
 
-        // ✅ 프록시 + seoulApi.js 사용해서 전체 데이터 로드
-        const allRows = await fetchSeoulAllEventsJSON({
-          useProxy: true,
-          pageSize: PAGE_SIZE,
-          hardLimit: 5000,
-        });
+        if (!SEOUL_API_BASE) {
+          throw new Error("REACT_APP_SEOUL_KEY가 설정되지 않았습니다 (.env 확인).");
+        }
 
-        if (disposed) return;
+        const userStartISO = startDate || ymd(new Date());
+        const userStart = new Date(userStartISO + "T00:00:00");
+        let pageStart = 1;
+        const allRows = [];
+        let stop = false;
+
+        while (!stop) {
+          const pageEnd = pageStart + PAGE_SIZE - 1;
+          // 수정된 SEOUL_API_BASE 사용 (배포 시엔 프록시 경로)
+          const url = `${SEOUL_API_BASE}/${pageStart}/${pageEnd}/`;
+          
+          const res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          
+          const json = await res.json();
+          const rows = json?.culturalEventInfo?.row || [];
+
+          if (rows.length === 0) break;
+
+          allRows.push(...rows);
+          
+          // 5000개 제한 (너무 많이 불러오지 않도록 안전장치)
+          if (allRows.length >= 5000) {
+             stop = true;
+             break;
+          }
+
+          const last = rows[rows.length - 1];
+          const endStr = last.END_DATE || last.ENDDATE || last.END || last.STRTDATE || last.DATE;
+          const lastEnd = parseToDate(endStr);
+
+          if (lastEnd && lastEnd < userStart) {
+            stop = true;
+          } else {
+            pageStart += PAGE_SIZE;
+          }
+          if (disposed) return;
+        }
 
         const items = normalizeEvents({
           culturalEventInfo: { row: allRows },
         });
+        if (!disposed) setEvents(items);
 
-        setEvents(items);
       } catch (e) {
         if (!disposed) setErr(e);
       } finally {
@@ -249,23 +264,20 @@ export default function MapPage() {
     return () => {
       disposed = true;
     };
-  }, []); // ✅ 한 번만 로드
+  }, [startDate]);
 
   /* 빠른 기간 선택 */
   useEffect(() => {
     if (!quick) return;
-
     const today = new Date();
-
     if (quick === "오늘") {
       const k = ymd(today);
       setStartDate(k);
       setEndDate(k);
       return;
     }
-
     if (quick === "이번 주") {
-      const day = today.getDay(); // 0:일
+      const day = today.getDay(); 
       const diffToMon = day === 0 ? -6 : 1 - day;
       const mon = new Date(today); mon.setDate(today.getDate() + diffToMon);
       const sun = new Date(mon);   sun.setDate(mon.getDate() + 6);
@@ -273,7 +285,6 @@ export default function MapPage() {
       setEndDate(ymd(sun));
       return;
     }
-
     if (quick === "이번 달") {
       const y = today.getFullYear(), m = today.getMonth();
       const s = new Date(y, m, 1);
@@ -319,6 +330,7 @@ export default function MapPage() {
 
   /* 장소 → 좌표(지오코딩) + 캐시 */
   const [geoReadyEvents, setGeoReadyEvents] = useState([]);
+  
   useEffect(() => {
     const kakao = kakaoRef.current;
     if (!kakao) return;
@@ -328,8 +340,8 @@ export default function MapPage() {
     const geocoder = new kakao.maps.services.Geocoder();
 
     let cancelled = false;
-
     const SEOUL_CENTER = new kakao.maps.LatLng(37.5665, 126.9780);
+
     const isBadPlace = (txt = "") => {
       const s = String(txt);
       return !s.trim() || /온라인|비대면|무관|미정|없음/i.test(s);
@@ -341,21 +353,21 @@ export default function MapPage() {
     };
 
     const fillCoords = async () => {
-      const targets = filtered.slice(0, 300);
+      // [수정 2] 과부하 방지를 위해 한 번에 변환할 개수를 300 -> 100개로 축소
+      const targets = filtered.slice(0, 100); 
       const out = [];
+
       for (const ev of targets) {
         const key = `${ev.gu || ""}|${ev.place || ""}|${ev.title}`;
         if (cache[key]) { out.push({ ...ev, ...cache[key] }); continue; }
 
         let coords = null;
 
-        // 0) PLACE가 지오코딩 부적합이면 바로 구 중심
         if (isBadPlace(ev.place) && GU_CENTER[ev.gu]) {
           const [lat, lng] = GU_CENTER[ev.gu];
           coords = { lat, lng };
         }
 
-        // 1) 키워드 검색 (구명 + 장소)
         if (!coords && ev.place) {
           const query = `${ev.gu ? ev.gu + " " : ""}${ev.place}`.trim();
           coords = await new Promise(resolve => {
@@ -373,7 +385,6 @@ export default function MapPage() {
           });
         }
 
-        // 2) 주소 지오코딩 (서울/구 검증)
         if (!coords && ev.place) {
           coords = await new Promise(resolve => {
             geocoder.addressSearch(ev.place, (result, status) => {
@@ -388,16 +399,14 @@ export default function MapPage() {
           });
         }
 
-        // 3) 최종 보강: 구 중심
         if (!coords && GU_CENTER[ev.gu]) {
           const [lat, lng] = GU_CENTER[ev.gu];
           coords = { lat, lng };
         }
 
-        // 서울 경계 검증
         if (coords) {
           if (!isWithinSeoulBoundary(coords.lat, coords.lng)) {
-            console.warn(`[범위 오류] 서울 밖 좌표 감지: ${ev.title}`, coords);
+            console.warn(`[범위 오류] 서울 밖 좌표: ${ev.title}`, coords);
             if (GU_CENTER[ev.gu]) {
               const [lat, lng] = GU_CENTER[ev.gu];
               coords = { lat, lng };
@@ -412,7 +421,10 @@ export default function MapPage() {
           out.push({ ...ev, ...coords });
         }
 
-        await new Promise(r => setTimeout(r, 25));
+        // [수정 3] API 호출 간격 늘리기 (25ms -> 150ms)
+        // 429 Too Many Requests 에러 방지용
+        await new Promise(r => setTimeout(r, 150));
+        
         if (cancelled) return;
       }
       saveGeoCache(cache);
@@ -423,13 +435,12 @@ export default function MapPage() {
     return () => { cancelled = true; };
   }, [filtered]);
 
-  /* 마커/클러스터 갱신 + 지도 클릭 시 팝업 닫기 */
+  /* 마커/클러스터 갱신 */
   useEffect(() => {
     const kakao = kakaoRef.current;
     const map = mapRef.current;
     if (!kakao || !map) return;
 
-    // 기존 마커/인포윈도우/클러스터 제거
     markersRef.current.forEach((m) => m.setMap(null));
     infoRef.current.forEach((i) => i.close());
     markersRef.current = [];
@@ -455,10 +466,7 @@ export default function MapPage() {
           <div style="color:#888; margin-top:2px;">${ev.dateLabel}</div>
         </div>
       `;
-      const iw = new kakao.maps.InfoWindow({
-        content: iwHtml,
-        removable: true,
-      });
+      const iw = new kakao.maps.InfoWindow({ content: iwHtml, removable: true });
 
       kakao.maps.event.addListener(marker, "click", () => {
         infos.forEach((i) => i.close());
@@ -499,7 +507,7 @@ export default function MapPage() {
     };
   }, [geoReadyEvents, area, selected]);
 
-  /* 즐겨찾기 토글 (페이지 이동 없음) */
+  /* 즐겨찾기 토글 */
   const [, forceFav] = useState(0);
   const onToggleFav = (ev) => {
     toggleFav({
